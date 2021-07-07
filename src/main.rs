@@ -1,5 +1,8 @@
+use std::fmt::Debug;
+use std::time::Duration;
+
 use futures_util::StreamExt;
-use k8s_openapi::api::core::v1::{Node, NodeSpec, Pod, PodSpec, PodStatus};
+use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams};
 use kube::{Client, Resource};
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
@@ -12,8 +15,6 @@ use rusoto_ec2::{
     DescribeInstancesRequest, DescribeInstancesResult, DisassociateAddressError,
     DisassociateAddressRequest, Ec2, Ec2Client,
 };
-use std::fmt::Debug;
-use std::time::Duration;
 
 const EIP_LABEL: &'static str = "eip.aws.materialize.com/id";
 const FINALIZER_NAME: &'static str = "eip.aws.materialize.com/disassociate";
@@ -41,7 +42,6 @@ async fn describe_instance(
     ec2_client
         .describe_instances(DescribeInstancesRequest {
             dry_run: None,
-            // TODO filter by VPC also?
             filters: None,
             instance_ids: Some(vec![instance_id]),
             max_results: None,
@@ -71,11 +71,11 @@ async fn associate_eip_with_pod_eni(
 
 async fn describe_addresses(
     ec2_client: &Ec2Client,
-    eip_id: String,
+    allocation_ids: Option<Vec<String>>,
 ) -> Result<DescribeAddressesResult, RusotoError<DescribeAddressesError>> {
     ec2_client
         .describe_addresses(DescribeAddressesRequest {
-            allocation_ids: Some(vec![eip_id]),
+            allocation_ids,
             dry_run: None,
             filters: None,
             public_ips: None,
@@ -103,73 +103,68 @@ async fn apply(
     pod: Pod,
 ) -> Result<ReconcilerAction, Error> {
     println!("Associating...");
-    if let Some(PodStatus {
-        pod_ip: Some(pod_ip),
-        ..
-    }) = &pod.status
-    {
-        if let Some(PodSpec {
-            node_name: Some(node_name),
-            ..
-        }) = &pod.spec
-        {
-            let node = node_api.get(node_name).await?;
-            if let Some(NodeSpec {
-                provider_id: Some(provider_id),
-                ..
-            }) = &node.spec
-            {
-                if let Some((_left, instance_id)) = provider_id.rsplit_once('/') {
-                    let instance_description =
-                        describe_instance(&ec2_client, instance_id.to_owned()).await?;
-                    let eni_id = instance_description
-                        .reservations
-                        .as_ref()
-                        .ok_or_else(|| Error::MissingReservations)?[0]
-                        .instances
-                        .as_ref()
-                        .ok_or_else(|| Error::MissingInstances)?[0]
-                        .network_interfaces
-                        .as_ref()
-                        .ok_or_else(|| Error::MissingNetworkInterfaces)?
-                        .iter()
-                        .find_map(|nic| {
-                            nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
-                                match ip.private_ip_address.as_ref()? {
-                                    x if x == pod_ip => {
-                                        Some(nic.network_interface_id.as_ref()?.to_owned())
-                                    }
-                                    _ => None,
-                                }
-                            })
-                        })
-                        .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
-                    associate_eip_with_pod_eni(
-                        &ec2_client,
-                        eip_id.to_owned(),
-                        eni_id,
-                        pod_ip.to_owned(),
-                    )
-                    .await?;
-                    Ok(ReconcilerAction {
-                        requeue_after: Some(Duration::from_secs(300)),
-                    })
-                } else {
-                    Err(Error::MalformedProviderId)
+    let pod_ip = pod
+        .status
+        .as_ref()
+        .ok_or_else(|| Error::MissingPodIp)?
+        .pod_ip
+        .as_ref()
+        .ok_or_else(|| Error::MissingPodIp)?;
+
+    let node_name = pod
+        .spec
+        .as_ref()
+        .ok_or_else(|| Error::MissingNodeName)?
+        .node_name
+        .as_ref()
+        .ok_or_else(|| Error::MissingNodeName)?;
+
+    let node = node_api.get(node_name).await?;
+
+    let provider_id = node
+        .spec
+        .as_ref()
+        .ok_or_else(|| Error::MissingProviderId)?
+        .provider_id
+        .as_ref()
+        .ok_or_else(|| Error::MissingProviderId)?;
+
+    let instance_id = provider_id
+        .rsplit_once('/')
+        .ok_or_else(|| Error::MalformedProviderId)?
+        .1;
+
+    let instance_description = describe_instance(&ec2_client, instance_id.to_owned()).await?;
+
+    let eni_id = instance_description
+        .reservations
+        .as_ref()
+        .ok_or_else(|| Error::MissingReservations)?[0]
+        .instances
+        .as_ref()
+        .ok_or_else(|| Error::MissingInstances)?[0]
+        .network_interfaces
+        .as_ref()
+        .ok_or_else(|| Error::MissingNetworkInterfaces)?
+        .iter()
+        .find_map(|nic| {
+            nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
+                match ip.private_ip_address.as_ref()? {
+                    x if x == pod_ip => Some(nic.network_interface_id.as_ref()?.to_owned()),
+                    _ => None,
                 }
-            } else {
-                Err(Error::MissingProviderId)
-            }
-        } else {
-            Err(Error::MissingNodeName)
-        }
-    } else {
-        Err(Error::MissingPodIp)
-    }
+            })
+        })
+        .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
+
+    associate_eip_with_pod_eni(&ec2_client, eip_id.to_owned(), eni_id, pod_ip.to_owned()).await?;
+    Ok(ReconcilerAction {
+        requeue_after: Some(Duration::from_secs(300)),
+    })
 }
 
 async fn cleanup(ec2_client: &Ec2Client, eip_id: String) -> Result<ReconcilerAction, Error> {
-    if let Some(association_id) = &describe_addresses(&ec2_client, eip_id.to_owned())
+    if let Some(association_id) = &describe_addresses(&ec2_client, Some(vec![eip_id.to_owned()]))
         .await?
         .addresses
         .ok_or_else(|| Error::MissingAddresses)?[0]
@@ -297,3 +292,10 @@ async fn main() -> anyhow::Result<()> {
 // annotations:
 // external-dns.alpha.kubernetes.io/hostname: jj3q1eoaaci.alexhunt.staging.materialize.cloud
 // external-dns.alpha.kubernetes.io/target: "1.2.3.4" should be set by cloud app
+//
+//
+//
+// TODO
+// Create EIP with appropriate tags.
+// Assign label to pod with EIP assignment.
+// Create finalizer to destroy the EIP.
