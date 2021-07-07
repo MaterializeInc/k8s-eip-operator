@@ -1,9 +1,9 @@
 use futures_util::StreamExt;
 use k8s_openapi::api::core::v1::{Pod, PodStatus};
-use kube::api::{Api, ListParams, Patch, PatchParams};
-use kube::Client;
-use kube::Resource;
+use kube::api::{Api, ListParams};
+use kube::{Client, Resource};
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
+use kube_runtime::finalizer::{finalizer, Event};
 use rusoto_core::region::Region;
 use rusoto_core::RusotoError;
 use rusoto_ec2::{
@@ -12,72 +12,26 @@ use rusoto_ec2::{
     DescribeInstancesRequest, DescribeInstancesResult, DisassociateAddressError,
     DisassociateAddressRequest, Ec2, Ec2Client, Filter,
 };
-use serde_json::{json, Value};
 use std::fmt::Debug;
 use std::time::Duration;
 
+const EIP_LABEL: &'static str = "eip.aws.materialize.com/id";
+const FINALIZER_NAME: &'static str = "eip.aws.materialize.com/disassociate";
+
 struct ContextData {
+    namespace: String,
     k8s_client: Client,
     ec2_client: Ec2Client,
 }
 
 impl ContextData {
-    fn new(k8s_client: Client, ec2_client: Ec2Client) -> ContextData {
+    fn new(namespace: String, k8s_client: Client, ec2_client: Ec2Client) -> ContextData {
         ContextData {
+            namespace,
             k8s_client,
             ec2_client,
         }
     }
-}
-
-enum Action {
-    Associate,
-    Disassociate,
-    NoOp,
-}
-
-fn determine_action(pod: &Pod) -> Action {
-    return if pod.meta().deletion_timestamp.is_some() {
-        Action::Disassociate
-    } else if pod.meta().finalizers.is_empty() {
-        // TODO actually check if it's attached?
-        Action::Associate
-    } else {
-        Action::NoOp
-    };
-}
-
-async fn add_finalizer(
-    k8s_client: Client,
-    name: &str,
-    namespace: &str,
-) -> Result<Pod, kube::Error> {
-    let api: Api<Pod> = Api::namespaced(k8s_client, namespace);
-    let finalizer: Value = json!({
-        "metadata": {
-            "finalizers": ["eip.aws.materialize.com/disassociate"]
-        }
-    });
-
-    let patch: Patch<&Value> = Patch::Merge(&finalizer);
-    Ok(api.patch(name, &PatchParams::default(), &patch).await?)
-}
-
-async fn remove_finalizer(
-    k8s_client: Client,
-    name: &str,
-    namespace: &str,
-) -> Result<Pod, kube::Error> {
-    let api: Api<Pod> = Api::namespaced(k8s_client, namespace);
-    // TODO only remove our finalizer
-    let finalizer: Value = json!({
-        "metadata": {
-            "finalizers": null
-        }
-    });
-
-    let patch: Patch<&Value> = Patch::Merge(&finalizer);
-    Ok(api.patch(name, &PatchParams::default(), &patch).await?)
 }
 
 async fn describe_instance_with_ip(
@@ -136,7 +90,6 @@ async fn disassociate_eip(
     ec2_client: &Ec2Client,
     association_id: String,
 ) -> Result<(), RusotoError<DisassociateAddressError>> {
-    // TODO get association ID
     ec2_client
         .disassociate_address(DisassociateAddressRequest {
             association_id: Some(association_id),
@@ -146,137 +99,100 @@ async fn disassociate_eip(
         .await
 }
 
-// https://dzone.com/articles/oxidizing-the-kubernetes-operator
-async fn reconcile(pod: Pod, context: Context<ContextData>) -> Result<ReconcilerAction, Error> {
-    let eip_id = &pod.meta().labels["eip.aws.materialize.com/id"];
-    let ec2_client = context.get_ref().ec2_client.clone();
-    let k8s_client = context.get_ref().k8s_client.clone();
-    let pod_name = pod
-        .meta()
-        .name
-        .as_ref()
-        .ok_or_else(|| Error::MissingPodName)?;
-    let pod_namespace = pod
-        .meta()
-        .namespace
-        .as_ref()
-        .ok_or_else(|| Error::MissingPodNamespace)?;
-
+async fn apply(
+    ec2_client: &Ec2Client,
+    eip_id: String,
+    pod: Pod,
+) -> Result<ReconcilerAction, Error> {
+    println!("Associating...");
     if let Some(PodStatus {
         pod_ip: Some(pod_ip),
         ..
     }) = &pod.status
     {
-        return match determine_action(&pod) {
-            Action::Associate => {
-                println!("Associating...");
-                let instance_description =
-                    describe_instance_with_ip(&ec2_client, pod_ip.to_owned()).await?;
-                let instance = &instance_description
-                    .reservations
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingReservations)?[0]
-                    .instances
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingInstances)?[0];
-                let eni_id = instance
-                    .network_interfaces
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingNetworkInterfaces)?
-                    .iter()
-                    .find_map(|nic| {
-                        nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
-                            match ip.private_ip_address.as_ref()? {
-                                x if x == pod_ip => {
-                                    Some(nic.network_interface_id.as_ref()?.to_owned())
-                                }
-                                _ => None,
-                            }
-                        })
-                    })
-                    .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
-                add_finalizer(k8s_client, &pod_name, &pod_namespace).await?;
-                associate_eip_with_pod_eni(
-                    &ec2_client,
-                    eip_id.to_owned(),
-                    eni_id,
-                    pod_ip.to_owned(),
-                )
-                .await?;
-                Ok(ReconcilerAction {
-                    requeue_after: Some(Duration::from_secs(30)),
+        let instance_description =
+            describe_instance_with_ip(&ec2_client, pod_ip.to_owned()).await?;
+        let eni_id = instance_description
+            .reservations
+            .as_ref()
+            .ok_or_else(|| Error::MissingReservations)?[0]
+            .instances
+            .as_ref()
+            .ok_or_else(|| Error::MissingInstances)?[0]
+            .network_interfaces
+            .as_ref()
+            .ok_or_else(|| Error::MissingNetworkInterfaces)?
+            .iter()
+            .find_map(|nic| {
+                nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
+                    match ip.private_ip_address.as_ref()? {
+                        x if x == pod_ip => Some(nic.network_interface_id.as_ref()?.to_owned()),
+                        _ => None,
+                    }
                 })
-            }
-            Action::Disassociate => {
-                println!("Disassociating...");
-                if let Some(association_id) = &describe_addresses(&ec2_client, eip_id.to_owned())
-                    .await?
-                    .addresses
-                    .ok_or_else(|| Error::MissingAddresses)?[0]
-                    .association_id
-                {
-                    disassociate_eip(&ec2_client, association_id.to_owned()).await?;
-                }
-                remove_finalizer(k8s_client, &pod_name, &pod_namespace).await?;
-                Ok(ReconcilerAction {
-                    requeue_after: None,
-                })
-            }
-            Action::NoOp => {
-                println!("NoOp...");
-                Ok(ReconcilerAction {
-                    requeue_after: Some(Duration::from_secs(30)),
-                })
-            }
-        };
+            })
+            .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
+        associate_eip_with_pod_eni(&ec2_client, eip_id.to_owned(), eni_id, pod_ip.to_owned())
+            .await?;
+        Ok(ReconcilerAction {
+            requeue_after: Some(Duration::from_secs(300)),
+        })
+    } else {
+        Err(Error::MissingPodIp)
+    }
+}
+
+async fn cleanup(ec2_client: &Ec2Client, eip_id: String) -> Result<ReconcilerAction, Error> {
+    if let Some(association_id) = &describe_addresses(&ec2_client, eip_id.to_owned())
+        .await?
+        .addresses
+        .ok_or_else(|| Error::MissingAddresses)?[0]
+        .association_id
+    {
+        disassociate_eip(&ec2_client, association_id.to_owned()).await?;
     }
     Ok(ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(30)),
+        requeue_after: None,
     })
 }
 
-fn on_error(error: &Error, _context: Context<ContextData>) -> ReconcilerAction {
-    eprintln!("Reconciliation error:\n{:?}", error);
-    ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(10)),
-    }
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let k8s_client = Client::try_default().await?;
-    let ec2_client = Ec2Client::new(Region::UsEast1);
-    let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
-
-    let api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
-    let context: Context<ContextData> =
-        Context::new(ContextData::new(k8s_client.clone(), ec2_client));
-    Controller::new(
-        api,
-        ListParams::default().labels("eip.aws.materialize.com/id"),
-    )
-    .run(reconcile, on_error, context)
-    .for_each(|reconciliation_result| async move {
-        match reconciliation_result {
-            Ok(resource) => println!("Reconciliation successful. Resource: {:?}", resource),
-            Err(err) => eprintln!("Reconciliation error: {:?}", err),
+// https://dzone.com/articles/oxidizing-the-kubernetes-operator
+async fn reconcile(
+    pod: Pod,
+    context: Context<ContextData>,
+) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
+    let namespace = &context.get_ref().namespace;
+    let k8s_client = context.get_ref().k8s_client.clone();
+    let api: Api<Pod> = Api::namespaced(k8s_client.clone(), namespace);
+    let eip_id = pod.meta().labels[EIP_LABEL].to_owned();
+    finalizer(&api, FINALIZER_NAME, pod, |event| async {
+        let ec2_client = context.get_ref().ec2_client.clone();
+        match event {
+            Event::Apply(pod) => apply(&ec2_client, eip_id, pod).await,
+            Event::Cleanup(_pod) => cleanup(&ec2_client, eip_id).await,
         }
     })
-    .await;
-    Ok(())
+    .await
+}
+
+fn on_error(
+    _error: &kube_runtime::finalizer::Error<Error>,
+    _context: Context<ContextData>,
+) -> ReconcilerAction {
+    ReconcilerAction {
+        requeue_after: Some(Duration::from_secs(5)),
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
-    #[error("Kubernetes reported error: {source}")]
+    #[error("Kubernetes error: {source}")]
     KubeError {
         #[from]
         source: kube::Error,
     },
-    #[error("Pod does not have a name.")]
-    MissingPodName,
-    #[error("Pod does not have a namespace.")]
-    MissingPodNamespace,
+    #[error("Pod does not have an IP address.")]
+    MissingPodIp,
     #[error("DescribeInstancesResult.reservations was None.")]
     MissingReservations,
     #[error("DescribeInstancesResult.reservations[0].instances was None.")]
@@ -307,6 +223,27 @@ enum Error {
         #[from]
         source: rusoto_core::RusotoError<DisassociateAddressError>,
     },
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let k8s_client = Client::try_default().await?;
+    let ec2_client = Ec2Client::new(Region::UsEast1);
+    let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
+
+    let api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
+    let context: Context<ContextData> =
+        Context::new(ContextData::new(namespace, k8s_client.clone(), ec2_client));
+    Controller::new(api, ListParams::default().labels(EIP_LABEL))
+        .run(reconcile, on_error, context)
+        .for_each(|reconciliation_result| async move {
+            match reconciliation_result {
+                Ok(resource) => println!("Reconciliation successful. Resource: {:?}", resource),
+                Err(err) => eprintln!("Reconciliation error: {:?}", err),
+            }
+        })
+        .await;
+    Ok(())
 }
 
 // This tool is responsible for:
