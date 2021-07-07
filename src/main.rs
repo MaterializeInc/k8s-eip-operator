@@ -1,5 +1,5 @@
 use futures_util::StreamExt;
-use k8s_openapi::api::core::v1::{Pod, PodStatus};
+use k8s_openapi::api::core::v1::{Node, NodeSpec, Pod, PodSpec, PodStatus};
 use kube::api::{Api, ListParams};
 use kube::{Client, Resource};
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
@@ -10,7 +10,7 @@ use rusoto_ec2::{
     AssociateAddressError, AssociateAddressRequest, AssociateAddressResult, DescribeAddressesError,
     DescribeAddressesRequest, DescribeAddressesResult, DescribeInstancesError,
     DescribeInstancesRequest, DescribeInstancesResult, DisassociateAddressError,
-    DisassociateAddressRequest, Ec2, Ec2Client, Filter,
+    DisassociateAddressRequest, Ec2, Ec2Client,
 };
 use std::fmt::Debug;
 use std::time::Duration;
@@ -34,19 +34,16 @@ impl ContextData {
     }
 }
 
-async fn describe_instance_with_ip(
+async fn describe_instance(
     ec2_client: &Ec2Client,
-    pod_ip: String,
+    instance_id: String,
 ) -> Result<DescribeInstancesResult, RusotoError<DescribeInstancesError>> {
     ec2_client
         .describe_instances(DescribeInstancesRequest {
             dry_run: None,
             // TODO filter by VPC also?
-            filters: Some(vec![Filter {
-                name: Some("network-interface.addresses.private-ip-address".to_owned()),
-                values: Some(vec![pod_ip]),
-            }]),
-            instance_ids: None,
+            filters: None,
+            instance_ids: Some(vec![instance_id]),
             max_results: None,
             next_token: None,
         })
@@ -101,6 +98,7 @@ async fn disassociate_eip(
 
 async fn apply(
     ec2_client: &Ec2Client,
+    node_api: Api<Node>,
     eip_id: String,
     pod: Pod,
 ) -> Result<ReconcilerAction, Error> {
@@ -110,33 +108,61 @@ async fn apply(
         ..
     }) = &pod.status
     {
-        let instance_description =
-            describe_instance_with_ip(&ec2_client, pod_ip.to_owned()).await?;
-        let eni_id = instance_description
-            .reservations
-            .as_ref()
-            .ok_or_else(|| Error::MissingReservations)?[0]
-            .instances
-            .as_ref()
-            .ok_or_else(|| Error::MissingInstances)?[0]
-            .network_interfaces
-            .as_ref()
-            .ok_or_else(|| Error::MissingNetworkInterfaces)?
-            .iter()
-            .find_map(|nic| {
-                nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
-                    match ip.private_ip_address.as_ref()? {
-                        x if x == pod_ip => Some(nic.network_interface_id.as_ref()?.to_owned()),
-                        _ => None,
-                    }
-                })
-            })
-            .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
-        associate_eip_with_pod_eni(&ec2_client, eip_id.to_owned(), eni_id, pod_ip.to_owned())
-            .await?;
-        Ok(ReconcilerAction {
-            requeue_after: Some(Duration::from_secs(300)),
-        })
+        if let Some(PodSpec {
+            node_name: Some(node_name),
+            ..
+        }) = &pod.spec
+        {
+            let node = node_api.get(node_name).await?;
+            if let Some(NodeSpec {
+                provider_id: Some(provider_id),
+                ..
+            }) = &node.spec
+            {
+                if let Some((_left, instance_id)) = provider_id.rsplit_once('/') {
+                    let instance_description =
+                        describe_instance(&ec2_client, instance_id.to_owned()).await?;
+                    let eni_id = instance_description
+                        .reservations
+                        .as_ref()
+                        .ok_or_else(|| Error::MissingReservations)?[0]
+                        .instances
+                        .as_ref()
+                        .ok_or_else(|| Error::MissingInstances)?[0]
+                        .network_interfaces
+                        .as_ref()
+                        .ok_or_else(|| Error::MissingNetworkInterfaces)?
+                        .iter()
+                        .find_map(|nic| {
+                            nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
+                                match ip.private_ip_address.as_ref()? {
+                                    x if x == pod_ip => {
+                                        Some(nic.network_interface_id.as_ref()?.to_owned())
+                                    }
+                                    _ => None,
+                                }
+                            })
+                        })
+                        .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
+                    associate_eip_with_pod_eni(
+                        &ec2_client,
+                        eip_id.to_owned(),
+                        eni_id,
+                        pod_ip.to_owned(),
+                    )
+                    .await?;
+                    Ok(ReconcilerAction {
+                        requeue_after: Some(Duration::from_secs(300)),
+                    })
+                } else {
+                    Err(Error::MalformedProviderId)
+                }
+            } else {
+                Err(Error::MissingProviderId)
+            }
+        } else {
+            Err(Error::MissingNodeName)
+        }
     } else {
         Err(Error::MissingPodIp)
     }
@@ -163,12 +189,13 @@ async fn reconcile(
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
     let namespace = &context.get_ref().namespace;
     let k8s_client = context.get_ref().k8s_client.clone();
-    let api: Api<Pod> = Api::namespaced(k8s_client.clone(), namespace);
+    let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), namespace);
+    let node_api: Api<Node> = Api::all(k8s_client.clone());
     let eip_id = pod.meta().labels[EIP_LABEL].to_owned();
-    finalizer(&api, FINALIZER_NAME, pod, |event| async {
+    finalizer(&pod_api, FINALIZER_NAME, pod, |event| async {
         let ec2_client = context.get_ref().ec2_client.clone();
         match event {
-            Event::Apply(pod) => apply(&ec2_client, eip_id, pod).await,
+            Event::Apply(pod) => apply(&ec2_client, node_api, eip_id, pod).await,
             Event::Cleanup(_pod) => cleanup(&ec2_client, eip_id).await,
         }
     })
@@ -193,6 +220,12 @@ enum Error {
     },
     #[error("Pod does not have an IP address.")]
     MissingPodIp,
+    #[error("Pod does not have a node name in its spec.")]
+    MissingNodeName,
+    #[error("Node does not have a provider_id in its spec.")]
+    MissingProviderId,
+    #[error("Node provider_id is not in expected format.")]
+    MalformedProviderId,
     #[error("DescribeInstancesResult.reservations was None.")]
     MissingReservations,
     #[error("DescribeInstancesResult.reservations[0].instances was None.")]
