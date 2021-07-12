@@ -325,7 +325,7 @@ enum Error {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), Error> {
     let k8s_client = Client::try_default().await?;
     let ec2_client = Ec2Client::new(Region::UsEast1);
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
@@ -344,17 +344,3 @@ async fn main() -> anyhow::Result<()> {
         .await;
     Ok(())
 }
-
-// https://dzone.com/articles/oxidizing-the-kubernetes-operator
-// https://github.com/LogMeIn/k8s-aws-operator
-// https://github.com/kubernetes-sigs/external-dns/pull/2115/files
-//
-// annotations:
-// external-dns.alpha.kubernetes.io/hostname: jj3q1eoaaci.alexhunt.staging.materialize.cloud
-// external-dns.alpha.kubernetes.io/target: "1.2.3.4" should be set by cloud app
-//
-//
-//
-// SNAT must be enabled:
-// https://docs.aws.amazon.com/eks/latest/userguide/external-snat.html
-// kubectl set env daemonset -n kube-system aws-node AWS_VPC_K8S_CNI_EXTERNALSNAT=true
