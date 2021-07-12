@@ -94,17 +94,3 @@ pub(crate) async fn disassociate_eip(
         })
         .await
 }
-
-// possible (sane) states:
-//
-// unknown        1. pod exists, nothing else yet
-// allocating     2. pod exists, finalizer in place
-// associating    3. pod exists, finalizer in place, EIP created,
-// annotating     4. pod exists, finalizer in place, EIP created, EIP associated
-// ready          5. pod exists, finalizer in place, EIP created, EIP associated, DNS annotation applied
-//
-// deannotating   6. pod exists, finalizer in place, EIP created, EIP associated, DNS annotation exists
-// disassociating 6. pod exists, finalizer in place, EIP created, EIP associated, DNS annotation removed
-// deallocating   7. pod exists, finalizer in place, EIP exists, EIP disassociated
-// deallocated    8. pod exists, finalizer in place, EIP released
-//                9. pod exists, finalizer removed, EIP released
