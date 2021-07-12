@@ -20,6 +20,7 @@ mod eip;
 const FIELD_MANAGER: &'static str = "eip.aws.materialize.com";
 const MANAGE_EIP_LABEL: &'static str = "eip.aws.materialize.com/manage";
 const FINALIZER_NAME: &'static str = "eip.aws.materialize.com/disassociate";
+const EIP_ALLOCATION_ID_ANNOTATION: &'static str = "eip.aws.materialize.com/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &'static str = "external-dns.alpha.kubernetes.io/target";
 
 struct ContextData {
@@ -42,12 +43,14 @@ async fn add_dns_target_annotation(
     pod_api: &Api<Pod>,
     pod_name: String,
     eip_address: String,
+    allocation_id: String,
 ) -> Result<Pod, kube::Error> {
     let patch = serde_json::json!({
         "apiVersion": "v1",
         "kind": "Pod",
         "metadata": {
             "annotations": {
+                EIP_ALLOCATION_ID_ANNOTATION: allocation_id,
                 EXTERNAL_DNS_TARGET_ANNOTATION: eip_address
             }
         }
@@ -110,7 +113,6 @@ async fn apply(
         }
         _ => {
             return Err(Error::MultipleEipsTaggedForPod);
-            // TODO bail? Cleanup extras and return just one?
         }
     };
 
@@ -179,15 +181,25 @@ async fn apply(
     // TODO add if statement
     // TODO If it is not associated, or associated with something else, associate it with the pod
     // If it is associated with the pod, continue
-    eip::associate_eip_with_pod_eni(&ec2_client, allocation_id, eni_id, pod_ip.to_owned()).await?;
-    // TODO if pod doesn't have annotation for DNS, add it
+    eip::associate_eip_with_pod_eni(
+        &ec2_client,
+        allocation_id.to_owned(),
+        eni_id,
+        pod_ip.to_owned(),
+    )
+    .await?;
     let pod_name = pod
         .metadata
         .name
         .as_ref()
         .ok_or_else(|| Error::MissingPodName)?;
-    // TODO add if
-    add_dns_target_annotation(pod_api, pod_name.to_owned(), public_ip.to_owned()).await?;
+    add_dns_target_annotation(
+        pod_api,
+        pod_name.to_owned(),
+        public_ip.to_owned(),
+        allocation_id,
+    )
+    .await?;
     Ok(ReconcilerAction {
         requeue_after: Some(Duration::from_secs(300)),
     })
@@ -199,14 +211,6 @@ async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, E
         .uid
         .as_ref()
         .ok_or_else(|| Error::MissingPodUid)?;
-    //if pod
-    //    .metadata
-    //    .annotations
-    //    .contains_key(EXTERNAL_DNS_TARGET_ANNOTATION)
-    //{
-    //    // TODO remove DNS annotation
-    //    // Is this needed, or will external-dns clean up itself?
-    //}
     let addresses = &eip::describe_addresses(&ec2_client, pod_uid.to_owned())
         .await?
         .addresses
@@ -359,13 +363,6 @@ async fn main() -> anyhow::Result<()> {
 // annotations:
 // external-dns.alpha.kubernetes.io/hostname: jj3q1eoaaci.alexhunt.staging.materialize.cloud
 // external-dns.alpha.kubernetes.io/target: "1.2.3.4" should be set by cloud app
-//
-//
-//
-// TODO
-// Create EIP with appropriate tags.
-// Assign label to pod with EIP assignment.
-// Create finalizer to destroy the EIP.
 //
 //
 //
