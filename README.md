@@ -27,7 +27,21 @@ This operator manages the following:
 3. TODO provide a yaml config for running this in K8S.
 4. Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
 
+## TODO
+- [ ] Do not re-associate EIP to ENI/private IP if already associated with that ENI/private IP.
+- [ ] Add Dockerfile.
+- [ ] Determine K8S RBAC configs needed to run within K8S.
+- [ ] Determine AWS IAM configs needed to run within K8S.
+- [ ] Add CI integrations.
+    - [ ] Build the binary.
+    - [ ] Build the Docker image.
+    - [ ] Push the image to Docker Hub.
+- [ ] Refactor code for readability.
+    - [ ] Create helper functions for getting values from kube and rusoto nested Option structs.
+- [ ] Add doc comments.
+- [ ] Update this README.md with missing documentation.
+
 ## References
-https://dzone.com/articles/oxidizing-the-kubernetes-operator
-https://github.com/LogMeIn/k8s-aws-operator
-https://github.com/kubernetes-sigs/external-dns/pull/2115/files
+* https://dzone.com/articles/oxidizing-the-kubernetes-operator
+* https://github.com/LogMeIn/k8s-aws-operator
+* https://github.com/kubernetes-sigs/external-dns/pull/2115/files
