@@ -206,6 +206,7 @@ async fn apply(
 }
 
 async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
+    println!("Cleaning up...");
     let pod_uid = pod
         .metadata
         .uid
@@ -344,21 +345,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// This tool is responsible for:
-// 1. Assigning the EIP to the ENI
-//
-// This means it needs to get the ENI ID, which it can do by querying AWS for ENI with the IP of the pod.
-// It also needs to query the association of the EIP.
-// https://rusoto.github.io/rusoto/rusoto_ec2/struct.DescribeAddressesRequest.html
-// https://rusoto.github.io/rusoto/rusoto_ec2/struct.DescribeInstancesRequest.html
-// aws ec2 describe-instances --profile mz-cloud-staging-admin --filters Name=network-interface.addresses.private-ip-address,Values=10.1.121.254
-
 // https://dzone.com/articles/oxidizing-the-kubernetes-operator
 // https://github.com/LogMeIn/k8s-aws-operator
 // https://github.com/kubernetes-sigs/external-dns/pull/2115/files
-//
-// labels:
-// eip.aws.materialize.com/id=eip-123456789 should be set by cloud app
 //
 // annotations:
 // external-dns.alpha.kubernetes.io/hostname: jj3q1eoaaci.alexhunt.staging.materialize.cloud
