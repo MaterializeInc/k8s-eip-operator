@@ -259,6 +259,11 @@ fn on_error(
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
+    #[error("io error: {source}")]
+    IoError {
+        #[from]
+        source: std::io::Error,
+    },
     #[error("Kubernetes error: {source}")]
     KubeError {
         #[from]
@@ -324,13 +329,26 @@ enum Error {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
+    println!("main");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(run())?;
+    Ok(())
+}
+async fn run() -> Result<(), Error> {
+    println!("run");
+    println!("getting k8s_client");
     let k8s_client = Client::try_default().await?;
+    println!("getting ec2_client");
     let ec2_client = Ec2Client::new(Region::UsEast1);
+    println!("getting namespace from env");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
 
+    println!("getting pod api");
     let api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
+    println!("watching for events");
     let context: Context<ContextData> =
         Context::new(ContextData::new(namespace, k8s_client.clone(), ec2_client));
     Controller::new(api, ListParams::default().labels(MANAGE_EIP_LABEL))
@@ -342,5 +360,6 @@ async fn main() -> Result<(), Error> {
             }
         })
         .await;
+    println!("exiting");
     Ok(())
 }
