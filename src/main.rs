@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -332,6 +333,11 @@ enum Error {
 fn main() -> Result<(), Error> {
     println!("main");
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_name_fn(|| {
+            static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
+            let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
+            format!("tokio:work-{}", id)
+        })
         .enable_all()
         .build()?;
     runtime.block_on(run())?;
