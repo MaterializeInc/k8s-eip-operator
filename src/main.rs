@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -9,12 +8,15 @@ use kube::Client;
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
 use rusoto_core::region::Region;
+use rusoto_core::request::HttpClient;
 use rusoto_core::RusotoError;
+use rusoto_credential::AutoRefreshingProvider;
 use rusoto_ec2::{
     AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
     DescribeInstancesRequest, DescribeInstancesResult, DisassociateAddressError, Ec2, Ec2Client,
     ReleaseAddressError,
 };
+use rusoto_sts::WebIdentityProvider;
 
 mod eip;
 
@@ -328,16 +330,21 @@ enum Error {
         #[from]
         source: rusoto_core::RusotoError<ReleaseAddressError>,
     },
+    #[error("Rusoto credentials error: {source}")]
+    CredentialsError {
+        #[from]
+        source: rusoto_credential::CredentialsError,
+    },
+    #[error("Rusoto TlsError error: {source}")]
+    TlsError {
+        #[from]
+        source: rusoto_core::request::TlsError,
+    },
 }
 
 fn main() -> Result<(), Error> {
     println!("main");
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .thread_name_fn(|| {
-            static ATOMIC_ID: AtomicUsize = AtomicUsize::new(0);
-            let id = ATOMIC_ID.fetch_add(1, Ordering::SeqCst);
-            format!("tokio:work-{}", id)
-        })
         .enable_all()
         .build()?;
     runtime.block_on(run())?;
@@ -348,7 +355,9 @@ async fn run() -> Result<(), Error> {
     println!("getting k8s_client");
     let k8s_client = Client::try_default().await?;
     println!("getting ec2_client");
-    let ec2_client = Ec2Client::new(Region::UsEast1);
+    let aws_credential_provider = AutoRefreshingProvider::new(WebIdentityProvider::from_k8s_env())?;
+    let http_client = HttpClient::new()?;
+    let ec2_client = Ec2Client::new_with(http_client, aws_credential_provider, Region::UsEast1);
     println!("getting namespace from env");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
 
