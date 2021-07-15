@@ -20,18 +20,100 @@ This operator manages the following:
 
 * For `external-dns` support, you must be using a version with headless ClusterIp support, either by waiting until [this PR is merged](https://github.com/kubernetes-sigs/external-dns/pull/2115) or by using a [fork with it already included](https://github.com/MaterializeInc/external-dns).
 
-## How to use this
+## Installation
 
-1. TODO provide AWS IAM configs to grant permission to run this thing.
-2. TODO provide K8S RBAC configs to grant permissions to run this thing.
-3. TODO provide a yaml config for running this in K8S.
-4. Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
+1. Create an AWS IAM role with the following policy:
+    ```json
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Action": [
+                    "ec2:AllocateAddress",
+                    "ec2:ReleaseAddress",
+                    "ec2:DescribeAddresses",
+                    "ec2:AssociateAddress",
+                    "ec2:DisassociateAddress",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:CreateTags",
+                    "ec2:DeleteTags",
+                    "ec2:DescribeInstances",
+                    "ec2:ModifyNetworkInterfaceAttribute",
+                ],
+                "Effect": "Allow",
+                "Resource": "*",
+            }
+        ],
+    }
+    ```
+2. Create a K8S ServiceAccount.
+    ```yaml
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: eip-operator
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT-ID:role/IAM-SERVICE-ROLE-NAME
+    ```
+3. Create a K8S ClusterRole.
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    metadata:
+      name: eip-operator
+    rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/status"]
+      verbs: ["get", "watch", "list", "update", "patch"]
+    - apiGroups: [""]
+      resources: ["nodes", "nodes/status"]
+      verbs: ["get"]
+    ```
+4. Create a K8S ClusterRoleBinding.
+    ```yaml
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    metadata:
+      name: eip-operator-viewer
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: eip-operator
+    subjects:
+    - kind: ServiceAccount
+      name: eip-operator
+      namespace: default
+    ```
+5. Create a K8S Deployment.
+    ```yaml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: eip-operator
+    spec:
+      strategy:
+        type: Recreate
+      selector:
+        matchLabels:
+          app: eip-operator
+      template:
+        metadata:
+          labels:
+            app: eip-operator
+        spec:
+          containers:
+          - name: eip-operator
+            image: materialize/k8s-eip-operator:latest
+    ```
+
+## Usage
+Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
 
 ## TODO
 - [ ] Do not re-associate EIP to ENI/private IP if already associated with that ENI/private IP.
-- [ ] Add Dockerfile.
-- [ ] Determine K8S RBAC configs needed to run within K8S.
-- [ ] Determine AWS IAM configs needed to run within K8S.
+- [X] Add Dockerfile.
+- [X] Determine K8S RBAC configs needed to run within K8S.
+- [X] Determine AWS IAM configs needed to run within K8S.
 - [ ] Add CI integrations.
     - [ ] Build the binary.
     - [ ] Build the Docker image.
@@ -39,7 +121,7 @@ This operator manages the following:
 - [ ] Refactor code for readability.
     - [ ] Create helper functions for getting values from kube and rusoto nested Option structs.
 - [ ] Add doc comments.
-- [ ] Update this README.md with missing documentation.
+- [X] Update this README.md with missing documentation.
 
 ## References
 * https://dzone.com/articles/oxidizing-the-kubernetes-operator
