@@ -7,7 +7,7 @@ use rusoto_ec2::{
     Tag, TagSpecification,
 };
 
-const EIP_POD_UID_TAG: &'static str = "eip.aws.materialize.com/pod_uid";
+const EIP_POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
 
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
