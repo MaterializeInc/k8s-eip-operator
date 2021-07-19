@@ -1,12 +1,14 @@
 use std::fmt::Debug;
 use std::time::Duration;
 
+use env_logger::Env;
 use futures_util::StreamExt;
 use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::Client;
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
+use log::{debug, error, info};
 use rusoto_core::region::Region;
 use rusoto_core::request::HttpClient;
 use rusoto_core::RusotoError;
@@ -84,7 +86,7 @@ async fn apply(
     pod_api: &Api<Pod>,
     pod: Pod,
 ) -> Result<ReconcilerAction, Error> {
-    println!("Associating...");
+    info!("Associating...");
     let pod_uid = pod
         .metadata
         .uid
@@ -167,11 +169,11 @@ async fn apply(
             nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
                 match ip.private_ip_address.as_ref()? {
                     x if x == pod_ip => {
-                        println!(
+                        debug!(
                             "Found matching NIC: {} {} {}",
-                            nic.network_interface_id.as_ref().unwrap(),
+                            nic.network_interface_id.as_ref()?,
                             pod_ip,
-                            ip.private_ip_address.as_ref().unwrap()
+                            ip.private_ip_address.as_ref()?,
                         );
                         Some(nic.network_interface_id.as_ref()?.to_owned())
                     }
@@ -209,7 +211,7 @@ async fn apply(
 }
 
 async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
-    println!("Cleaning up...");
+    info!("Cleaning up...");
     let pod_uid = pod
         .metadata
         .uid
@@ -343,38 +345,38 @@ enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    println!("main");
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     runtime.block_on(run())?;
     Ok(())
 }
+
 async fn run() -> Result<(), Error> {
-    println!("run");
-    println!("getting k8s_client");
+    debug!("Getting k8s_client...");
     let k8s_client = Client::try_default().await?;
-    println!("getting ec2_client");
+    debug!("Getting ec2_client...");
     let aws_credential_provider = AutoRefreshingProvider::new(WebIdentityProvider::from_k8s_env())?;
     let http_client = HttpClient::new()?;
     let ec2_client = Ec2Client::new_with(http_client, aws_credential_provider, Region::UsEast1);
-    println!("getting namespace from env");
+    debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
 
-    println!("getting pod api");
+    debug!("Getting pod api");
     let api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
-    println!("watching for events");
+    info!("Watching for events...");
     let context: Context<ContextData> =
         Context::new(ContextData::new(namespace, k8s_client.clone(), ec2_client));
     Controller::new(api, ListParams::default().labels(MANAGE_EIP_LABEL))
         .run(reconcile, on_error, context)
         .for_each(|reconciliation_result| async move {
             match reconciliation_result {
-                Ok(resource) => println!("Reconciliation successful. Resource: {:?}", resource),
-                Err(err) => eprintln!("Reconciliation error: {:?}", err),
+                Ok(resource) => info!("Reconciliation successful. Resource: {:?}", resource),
+                Err(err) => error!("Reconciliation error: {:?}", err),
             }
         })
         .await;
-    println!("exiting");
+    debug!("exiting");
     Ok(())
 }
