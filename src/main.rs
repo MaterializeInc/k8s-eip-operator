@@ -44,6 +44,7 @@ impl ContextData {
     }
 }
 
+/// Applies annotation to pod specifying the target IP for external-dns.
 async fn add_dns_target_annotation(
     pod_api: &Api<Pod>,
     pod_name: String,
@@ -65,6 +66,7 @@ async fn add_dns_target_annotation(
     pod_api.patch(&pod_name, &params, &patch).await
 }
 
+/// Describes an AWS EC2 instance with the supplied instance_id.
 async fn describe_instance(
     ec2_client: &Ec2Client,
     instance_id: String,
@@ -80,6 +82,7 @@ async fn describe_instance(
         .await
 }
 
+/// Creates or updates EIP associations when creating or updating a pod.
 async fn apply(
     ec2_client: &Ec2Client,
     node_api: &Api<Node>,
@@ -205,6 +208,7 @@ async fn apply(
     })
 }
 
+/// Deletes AWS Elastic IP associated with a pod being destroyed.
 async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
     info!("Cleaning up...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
@@ -226,6 +230,9 @@ async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, E
     })
 }
 
+/// Takes actions to create/associate an EIP with the pod or clean up if the pod is being deleted.
+/// Wraps these operations with a finalizer to ensure the pod is not deleted without cleaning up
+/// the Elastic IP associated with it.
 async fn reconcile(
     pod: Pod,
     context: Context<ContextData>,
@@ -244,6 +251,7 @@ async fn reconcile(
     .await
 }
 
+/// Requeues the operation if there is an error.
 fn on_error(
     _error: &kube_runtime::finalizer::Error<Error>,
     _context: Context<ContextData>,

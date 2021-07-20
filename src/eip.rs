@@ -9,6 +9,7 @@ use rusoto_ec2::{
 
 const EIP_POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
 
+/// Allocates an AWS Elastic IP, and tags it with the pod uid it will later be associated with.
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
     pod_uid: String,
@@ -32,6 +33,7 @@ pub(crate) async fn allocate_address(
         .await
 }
 
+/// Releases (deletes) an AWS Elastic IP.
 pub(crate) async fn release_address(
     ec2_client: &Ec2Client,
     allocation_id: String,
@@ -46,6 +48,8 @@ pub(crate) async fn release_address(
         .await
 }
 
+/// Associates an AWS Elastic IP with the Elastic Network Interface.
+/// The private IP of the association will be the pod IP supplied.
 pub(crate) async fn associate_eip_with_pod_eni(
     ec2_client: &Ec2Client,
     eip_id: String,
@@ -98,6 +102,7 @@ pub(crate) async fn describe_addresses_with_pod_uid(
         .await
 }
 
+/// Disassociates an Elastic IP from an Elastic Network Interface.
 pub(crate) async fn disassociate_eip(
     ec2_client: &Ec2Client,
     association_id: String,

@@ -120,7 +120,7 @@ Add the `eip.aws.materialize.com/manage=true` label to any pods that you want th
     - [ ] Push the image to Docker Hub.
 - [ ] Refactor code for readability.
     - [ ] Create helper functions for getting values from kube and rusoto nested Option structs.
-- [ ] Add doc comments.
+- [X] Add doc comments.
 - [X] Update this README.md with missing documentation.
 
 ## References
