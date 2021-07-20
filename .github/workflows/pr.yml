@@ -1,8 +1,6 @@
-name: main
+name: PR
 on:
-  push:
-    branches:
-      - main
+  pull_request:
 
 env:
   DOCKER_BUILDKIT: 1
@@ -23,17 +21,7 @@ jobs:
       with:
         command: clippy
   build:
-    needs: lint
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
-    - uses: docker/login-action@v1
-      with:
-        username: materializer
-        password: ${{ secrets.DOCKER_HUB_MATERIALIZER_API_KEY }}
-    - uses: docker/build-push-action@v2
-      with:
-        push: true
-        tags:
-          - materialize/k8s-eip-operator:${{ github.sha }}
-          - materialize/k8s-eip-operator:latest
+    - run: docker build .

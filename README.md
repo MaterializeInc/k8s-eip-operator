@@ -114,12 +114,10 @@ Add the `eip.aws.materialize.com/manage=true` label to any pods that you want th
 - [X] Add Dockerfile.
 - [X] Determine K8S RBAC configs needed to run within K8S.
 - [X] Determine AWS IAM configs needed to run within K8S.
-- [ ] Add CI integrations.
+- [X] Add CI integrations.
     - [X] Build the binary.
     - [X] Build the Docker image.
-    - [ ] Push the image to Docker Hub.
-- [ ] Refactor code for readability.
-    - [ ] Create helper functions for getting values from kube and rusoto nested Option structs.
+    - [X] Push the image to Docker Hub.
 - [X] Add doc comments.
 - [X] Update this README.md with missing documentation.
 
