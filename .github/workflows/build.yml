@@ -1,0 +1,39 @@
+name: main
+on:
+  push:
+    branches:
+      - main
+
+env:
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  lint:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        components: rustfmt, clippy
+    - uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: -- --check
+    - uses: actions-rs/cargo@v1
+      with:
+        command: clippy
+  build:
+    needs: lint
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - uses: docker/login-action@v1
+      with:
+        username: materializer
+        password: ${{ secrets.DOCKER_HUB_MATERIALIZER_API_KEY }}
+    - uses: docker/build-push-action@v2
+      with:
+        push: true
+        tags:
+          - materialize/k8s-eip-operator:${{ github.sha }}
+          - materialize/k8s-eip-operator:latest

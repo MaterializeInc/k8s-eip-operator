@@ -22,11 +22,11 @@ use rusoto_sts::WebIdentityProvider;
 
 mod eip;
 
-const FIELD_MANAGER: &'static str = "eip.aws.materialize.com";
-const MANAGE_EIP_LABEL: &'static str = "eip.aws.materialize.com/manage";
-const FINALIZER_NAME: &'static str = "eip.aws.materialize.com/disassociate";
-const EIP_ALLOCATION_ID_ANNOTATION: &'static str = "eip.aws.materialize.com/allocation_id";
-const EXTERNAL_DNS_TARGET_ANNOTATION: &'static str = "external-dns.alpha.kubernetes.io/target";
+const FIELD_MANAGER: &str = "eip.aws.materialize.com";
+const MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
+const FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
+const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.aws.materialize.com/allocation_id";
+const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
 
 struct ContextData {
     namespace: String,
@@ -44,6 +44,7 @@ impl ContextData {
     }
 }
 
+/// Applies annotation to pod specifying the target IP for external-dns.
 async fn add_dns_target_annotation(
     pod_api: &Api<Pod>,
     pod_name: String,
@@ -65,6 +66,7 @@ async fn add_dns_target_annotation(
     pod_api.patch(&pod_name, &params, &patch).await
 }
 
+/// Describes an AWS EC2 instance with the supplied instance_id.
 async fn describe_instance(
     ec2_client: &Ec2Client,
     instance_id: String,
@@ -80,6 +82,7 @@ async fn describe_instance(
         .await
 }
 
+/// Creates or updates EIP associations when creating or updating a pod.
 async fn apply(
     ec2_client: &Ec2Client,
     node_api: &Api<Node>,
@@ -87,33 +90,27 @@ async fn apply(
     pod: Pod,
 ) -> Result<ReconcilerAction, Error> {
     info!("Associating...");
-    let pod_uid = pod
-        .metadata
-        .uid
-        .as_ref()
-        .ok_or_else(|| Error::MissingPodUid)?;
-    let addresses = &eip::describe_addresses(&ec2_client, pod_uid.to_owned())
+    let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
+    let addresses = eip::describe_addresses_with_pod_uid(&ec2_client, pod_uid.to_owned())
         .await?
         .addresses
-        .ok_or_else(|| Error::MissingAddresses)?;
+        .ok_or(Error::MissingAddresses)?;
     let (allocation_id, public_ip) = match addresses.len() {
         0 => {
             let response = eip::allocate_address(ec2_client, pod_uid.to_owned()).await?;
-            let allocation_id = response
-                .allocation_id
-                .ok_or_else(|| Error::MissingAllocationId)?;
-            let public_ip = response.public_ip.ok_or_else(|| Error::MissingPublicIp)?;
+            let allocation_id = response.allocation_id.ok_or(Error::MissingAllocationId)?;
+            let public_ip = response.public_ip.ok_or(Error::MissingPublicIp)?;
             (allocation_id, public_ip)
         }
         1 => {
             let allocation_id = addresses[0]
                 .allocation_id
                 .as_ref()
-                .ok_or_else(|| Error::MissingAllocationId)?;
+                .ok_or(Error::MissingAllocationId)?;
             let public_ip = addresses[0]
                 .public_ip
                 .as_ref()
-                .ok_or_else(|| Error::MissingPublicIp)?;
+                .ok_or(Error::MissingPublicIp)?;
             (allocation_id.to_owned(), public_ip.to_owned())
         }
         _ => {
@@ -124,32 +121,32 @@ async fn apply(
     let pod_ip = pod
         .status
         .as_ref()
-        .ok_or_else(|| Error::MissingPodIp)?
+        .ok_or(Error::MissingPodIp)?
         .pod_ip
         .as_ref()
-        .ok_or_else(|| Error::MissingPodIp)?;
+        .ok_or(Error::MissingPodIp)?;
 
     let node_name = pod
         .spec
         .as_ref()
-        .ok_or_else(|| Error::MissingNodeName)?
+        .ok_or(Error::MissingNodeName)?
         .node_name
         .as_ref()
-        .ok_or_else(|| Error::MissingNodeName)?;
+        .ok_or(Error::MissingNodeName)?;
 
     let node = node_api.get(node_name).await?;
 
     let provider_id = node
         .spec
         .as_ref()
-        .ok_or_else(|| Error::MissingProviderId)?
+        .ok_or(Error::MissingProviderId)?
         .provider_id
         .as_ref()
-        .ok_or_else(|| Error::MissingProviderId)?;
+        .ok_or(Error::MissingProviderId)?;
 
     let instance_id = provider_id
         .rsplit_once('/')
-        .ok_or_else(|| Error::MalformedProviderId)?
+        .ok_or(Error::MalformedProviderId)?
         .1;
 
     let instance_description = describe_instance(&ec2_client, instance_id.to_owned()).await?;
@@ -157,13 +154,13 @@ async fn apply(
     let eni_id = instance_description
         .reservations
         .as_ref()
-        .ok_or_else(|| Error::MissingReservations)?[0]
+        .ok_or(Error::MissingReservations)?[0]
         .instances
         .as_ref()
-        .ok_or_else(|| Error::MissingInstances)?[0]
+        .ok_or(Error::MissingInstances)?[0]
         .network_interfaces
         .as_ref()
-        .ok_or_else(|| Error::MissingNetworkInterfaces)?
+        .ok_or(Error::MissingNetworkInterfaces)?
         .iter()
         .find_map(|nic| {
             nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
@@ -181,23 +178,24 @@ async fn apply(
                 }
             })
         })
-        .ok_or_else(|| Error::NoInterfaceWithThatIp)?;
-
-    // TODO add if statement
-    // TODO If it is not associated, or associated with something else, associate it with the pod
-    // If it is associated with the pod, continue
-    eip::associate_eip_with_pod_eni(
-        &ec2_client,
-        allocation_id.to_owned(),
-        eni_id,
-        pod_ip.to_owned(),
-    )
-    .await?;
-    let pod_name = pod
-        .metadata
-        .name
-        .as_ref()
-        .ok_or_else(|| Error::MissingPodName)?;
+        .ok_or(Error::NoInterfaceWithThatIp)?;
+    let eip_description = eip::describe_address(&ec2_client, allocation_id.to_owned())
+        .await?
+        .addresses
+        .ok_or(Error::MissingAddresses)?
+        .swap_remove(0);
+    if eip_description.network_interface_id != Some(eni_id.to_owned())
+        || eip_description.private_ip_address != Some(pod_ip.to_owned())
+    {
+        eip::associate_eip_with_pod_eni(
+            &ec2_client,
+            allocation_id.to_owned(),
+            eni_id,
+            pod_ip.to_owned(),
+        )
+        .await?;
+    }
+    let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     add_dns_target_annotation(
         pod_api,
         pod_name.to_owned(),
@@ -210,17 +208,14 @@ async fn apply(
     })
 }
 
+/// Deletes AWS Elastic IP associated with a pod being destroyed.
 async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
     info!("Cleaning up...");
-    let pod_uid = pod
-        .metadata
-        .uid
-        .as_ref()
-        .ok_or_else(|| Error::MissingPodUid)?;
-    let addresses = &eip::describe_addresses(&ec2_client, pod_uid.to_owned())
+    let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
+    let addresses = &eip::describe_addresses_with_pod_uid(&ec2_client, pod_uid.to_owned())
         .await?
         .addresses
-        .ok_or_else(|| Error::MissingAddresses)?;
+        .ok_or(Error::MissingAddresses)?;
     for address in addresses {
         if let Some(association_id) = &address.association_id {
             eip::disassociate_eip(&ec2_client, association_id.to_owned()).await?;
@@ -235,6 +230,9 @@ async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, E
     })
 }
 
+/// Takes actions to create/associate an EIP with the pod or clean up if the pod is being deleted.
+/// Wraps these operations with a finalizer to ensure the pod is not deleted without cleaning up
+/// the Elastic IP associated with it.
 async fn reconcile(
     pod: Pod,
     context: Context<ContextData>,
@@ -253,6 +251,7 @@ async fn reconcile(
     .await
 }
 
+/// Requeues the operation if there is an error.
 fn on_error(
     _error: &kube_runtime::finalizer::Error<Error>,
     _context: Context<ContextData>,
@@ -265,12 +264,12 @@ fn on_error(
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error("io error: {source}")]
-    IoError {
+    Io {
         #[from]
         source: std::io::Error,
     },
     #[error("Kubernetes error: {source}")]
-    KubeError {
+    Kube {
         #[from]
         source: kube::Error,
     },
@@ -303,42 +302,42 @@ enum Error {
     #[error("DescribeAddressesResult.addresses was None.")]
     NoInterfaceWithThatIp,
     #[error("Rusoto allocate_address reported error: {source}")]
-    AllocateAddressError {
+    AllocateAddress {
         #[from]
         source: rusoto_core::RusotoError<AllocateAddressError>,
     },
     #[error("Rusoto describe_instances reported error: {source}")]
-    DescribeInstancesError {
+    RusotoDescribeInstances {
         #[from]
         source: rusoto_core::RusotoError<DescribeInstancesError>,
     },
     #[error("Rusoto describe_addresses reported error: {source}")]
-    DescribeAddressesError {
+    RusotoDescribeAddresses {
         #[from]
         source: rusoto_core::RusotoError<DescribeAddressesError>,
     },
     #[error("Rusoto associate_address reported error: {source}")]
-    AssociateAddressError {
+    RusotoAssociateAddress {
         #[from]
         source: rusoto_core::RusotoError<AssociateAddressError>,
     },
     #[error("Rusoto disassociate_address reported error: {source}")]
-    DisassociateAddressError {
+    RusotoDisassociateAddress {
         #[from]
         source: rusoto_core::RusotoError<DisassociateAddressError>,
     },
     #[error("Rusoto release_address reported error: {source}")]
-    ReleaseAddressError {
+    RusotoReleaseAddress {
         #[from]
         source: rusoto_core::RusotoError<ReleaseAddressError>,
     },
     #[error("Rusoto credentials error: {source}")]
-    CredentialsError {
+    RusotoCredentials {
         #[from]
         source: rusoto_credential::CredentialsError,
     },
     #[error("Rusoto TlsError error: {source}")]
-    TlsError {
+    RusotoTls {
         #[from]
         source: rusoto_core::request::TlsError,
     },
