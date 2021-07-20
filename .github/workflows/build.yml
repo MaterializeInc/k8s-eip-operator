@@ -34,6 +34,6 @@ jobs:
     - uses: docker/build-push-action@v2
       with:
         push: true
-        tags:
-          - materialize/k8s-eip-operator:${{ github.sha }}
-          - materialize/k8s-eip-operator:latest
+        tags: |
+          materialize/k8s-eip-operator:${{ github.sha }}
+          materialize/k8s-eip-operator:latest
