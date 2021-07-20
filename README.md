@@ -110,13 +110,13 @@ This operator manages the following:
 Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
 
 ## TODO
-- [ ] Do not re-associate EIP to ENI/private IP if already associated with that ENI/private IP.
+- [X] Do not re-associate EIP to ENI/private IP if already associated with that ENI/private IP.
 - [X] Add Dockerfile.
 - [X] Determine K8S RBAC configs needed to run within K8S.
 - [X] Determine AWS IAM configs needed to run within K8S.
 - [ ] Add CI integrations.
-    - [ ] Build the binary.
-    - [ ] Build the Docker image.
+    - [X] Build the binary.
+    - [X] Build the Docker image.
     - [ ] Push the image to Docker Hub.
 - [ ] Refactor code for readability.
     - [ ] Create helper functions for getting values from kube and rusoto nested Option structs.

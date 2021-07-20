@@ -88,7 +88,7 @@ async fn apply(
 ) -> Result<ReconcilerAction, Error> {
     info!("Associating...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
-    let addresses = &eip::describe_addresses(&ec2_client, pod_uid.to_owned())
+    let addresses = eip::describe_addresses_with_pod_uid(&ec2_client, pod_uid.to_owned())
         .await?
         .addresses
         .ok_or(Error::MissingAddresses)?;
@@ -176,17 +176,22 @@ async fn apply(
             })
         })
         .ok_or(Error::NoInterfaceWithThatIp)?;
-
-    // TODO add if statement
-    // TODO If it is not associated, or associated with something else, associate it with the pod
-    // If it is associated with the pod, continue
-    eip::associate_eip_with_pod_eni(
-        &ec2_client,
-        allocation_id.to_owned(),
-        eni_id,
-        pod_ip.to_owned(),
-    )
-    .await?;
+    let eip_description = eip::describe_address(&ec2_client, allocation_id.to_owned())
+        .await?
+        .addresses
+        .ok_or(Error::MissingAddresses)?
+        .swap_remove(0);
+    if eip_description.network_interface_id != Some(eni_id.to_owned())
+        || eip_description.private_ip_address != Some(pod_ip.to_owned())
+    {
+        eip::associate_eip_with_pod_eni(
+            &ec2_client,
+            allocation_id.to_owned(),
+            eni_id,
+            pod_ip.to_owned(),
+        )
+        .await?;
+    }
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     add_dns_target_annotation(
         pod_api,
@@ -203,7 +208,7 @@ async fn apply(
 async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
     info!("Cleaning up...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
-    let addresses = &eip::describe_addresses(&ec2_client, pod_uid.to_owned())
+    let addresses = &eip::describe_addresses_with_pod_uid(&ec2_client, pod_uid.to_owned())
         .await?
         .addresses
         .ok_or(Error::MissingAddresses)?;

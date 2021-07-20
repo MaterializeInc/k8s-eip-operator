@@ -65,7 +65,23 @@ pub(crate) async fn associate_eip_with_pod_eni(
         .await
 }
 
-pub(crate) async fn describe_addresses(
+/// Describes a single EIP with the specified allocation ID.
+pub(crate) async fn describe_address(
+    ec2_client: &Ec2Client,
+    allocation_id: String,
+) -> Result<DescribeAddressesResult, RusotoError<DescribeAddressesError>> {
+    ec2_client
+        .describe_addresses(DescribeAddressesRequest {
+            allocation_ids: Some(vec![allocation_id]),
+            dry_run: None,
+            filters: None,
+            public_ips: None,
+        })
+        .await
+}
+
+/// Describes any EIPs tagged with the specified pod uid.
+pub(crate) async fn describe_addresses_with_pod_uid(
     ec2_client: &Ec2Client,
     pod_uid: String,
 ) -> Result<DescribeAddressesResult, RusotoError<DescribeAddressesError>> {
