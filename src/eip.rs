@@ -1,11 +1,13 @@
-use rusoto_core::RusotoError;
-use rusoto_ec2::{
-    AllocateAddressError, AllocateAddressRequest, AllocateAddressResult, AssociateAddressError,
-    AssociateAddressRequest, AssociateAddressResult, DescribeAddressesError,
-    DescribeAddressesRequest, DescribeAddressesResult, DisassociateAddressError,
-    DisassociateAddressRequest, Ec2, Ec2Client, Filter, ReleaseAddressError, ReleaseAddressRequest,
-    Tag, TagSpecification,
+use aws_sdk_ec2::error::{
+    AllocateAddressError, AssociateAddressError, DescribeAddressesError, DisassociateAddressError,
+    ReleaseAddressError,
 };
+use aws_sdk_ec2::model::{DomainType, Filter, ResourceType, Tag, TagSpecification};
+use aws_sdk_ec2::output::{
+    AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput,
+    DisassociateAddressOutput, ReleaseAddressOutput,
+};
+use aws_sdk_ec2::{Client as Ec2Client, SdkError};
 
 const EIP_POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
 
@@ -13,23 +15,17 @@ const EIP_POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
     pod_uid: String,
-) -> Result<AllocateAddressResult, RusotoError<AllocateAddressError>> {
+) -> Result<AllocateAddressOutput, SdkError<AllocateAddressError>> {
     ec2_client
-        .allocate_address(AllocateAddressRequest {
-            address: None,
-            customer_owned_ipv_4_pool: None,
-            domain: Some("vpc".to_owned()),
-            dry_run: None,
-            network_border_group: None,
-            public_ipv_4_pool: None,
-            tag_specifications: Some(vec![TagSpecification {
-                resource_type: Some("elastic-ip".to_owned()),
-                tags: Some(vec![Tag {
-                    key: Some(EIP_POD_UID_TAG.to_owned()),
-                    value: Some(pod_uid),
-                }]),
-            }]),
-        })
+        .allocate_address()
+        .domain(DomainType::Vpc)
+        .tag_specifications(
+            TagSpecification::builder()
+                .resource_type(ResourceType::ElasticIp)
+                .tags(Tag::builder().key(EIP_POD_UID_TAG).value(pod_uid).build())
+                .build(),
+        )
+        .send()
         .await
 }
 
@@ -37,14 +33,11 @@ pub(crate) async fn allocate_address(
 pub(crate) async fn release_address(
     ec2_client: &Ec2Client,
     allocation_id: String,
-) -> Result<(), RusotoError<ReleaseAddressError>> {
+) -> Result<ReleaseAddressOutput, SdkError<ReleaseAddressError>> {
     ec2_client
-        .release_address(ReleaseAddressRequest {
-            allocation_id: Some(allocation_id),
-            dry_run: None,
-            network_border_group: None,
-            public_ip: None,
-        })
+        .release_address()
+        .allocation_id(allocation_id)
+        .send()
         .await
 }
 
@@ -55,17 +48,14 @@ pub(crate) async fn associate_eip_with_pod_eni(
     eip_id: String,
     eni_id: String,
     pod_ip: String,
-) -> Result<AssociateAddressResult, RusotoError<AssociateAddressError>> {
+) -> Result<AssociateAddressOutput, SdkError<AssociateAddressError>> {
     ec2_client
-        .associate_address(AssociateAddressRequest {
-            allocation_id: Some(eip_id),
-            allow_reassociation: Some(true),
-            dry_run: None,
-            instance_id: None,
-            network_interface_id: Some(eni_id),
-            private_ip_address: Some(pod_ip),
-            public_ip: None,
-        })
+        .associate_address()
+        .allocation_id(eip_id)
+        .allow_reassociation(true)
+        .network_interface_id(eni_id)
+        .private_ip_address(pod_ip)
+        .send()
         .await
 }
 
@@ -73,14 +63,11 @@ pub(crate) async fn associate_eip_with_pod_eni(
 pub(crate) async fn describe_address(
     ec2_client: &Ec2Client,
     allocation_id: String,
-) -> Result<DescribeAddressesResult, RusotoError<DescribeAddressesError>> {
+) -> Result<DescribeAddressesOutput, SdkError<DescribeAddressesError>> {
     ec2_client
-        .describe_addresses(DescribeAddressesRequest {
-            allocation_ids: Some(vec![allocation_id]),
-            dry_run: None,
-            filters: None,
-            public_ips: None,
-        })
+        .describe_addresses()
+        .allocation_ids(allocation_id)
+        .send()
         .await
 }
 
@@ -88,17 +75,16 @@ pub(crate) async fn describe_address(
 pub(crate) async fn describe_addresses_with_pod_uid(
     ec2_client: &Ec2Client,
     pod_uid: String,
-) -> Result<DescribeAddressesResult, RusotoError<DescribeAddressesError>> {
+) -> Result<DescribeAddressesOutput, SdkError<DescribeAddressesError>> {
     ec2_client
-        .describe_addresses(DescribeAddressesRequest {
-            allocation_ids: None,
-            dry_run: None,
-            filters: Some(vec![Filter {
-                name: Some(format!("tag:{}", EIP_POD_UID_TAG)),
-                values: Some(vec![pod_uid]),
-            }]),
-            public_ips: None,
-        })
+        .describe_addresses()
+        .filters(
+            Filter::builder()
+                .name(format!("tag:{}", EIP_POD_UID_TAG))
+                .values(pod_uid.to_owned())
+                .build(),
+        )
+        .send()
         .await
 }
 
@@ -106,12 +92,10 @@ pub(crate) async fn describe_addresses_with_pod_uid(
 pub(crate) async fn disassociate_eip(
     ec2_client: &Ec2Client,
     association_id: String,
-) -> Result<(), RusotoError<DisassociateAddressError>> {
+) -> Result<DisassociateAddressOutput, SdkError<DisassociateAddressError>> {
     ec2_client
-        .disassociate_address(DisassociateAddressRequest {
-            association_id: Some(association_id),
-            dry_run: None,
-            public_ip: None,
-        })
+        .disassociate_address()
+        .association_id(association_id)
+        .send()
         .await
 }

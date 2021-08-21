@@ -1,6 +1,12 @@
 use std::fmt::Debug;
 use std::time::Duration;
 
+use aws_sdk_ec2::error::{
+    AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
+    DisassociateAddressError, ReleaseAddressError,
+};
+use aws_sdk_ec2::output::DescribeInstancesOutput;
+use aws_sdk_ec2::{Client as Ec2Client, Config, SdkError};
 use env_logger::Env;
 use futures_util::StreamExt;
 use k8s_openapi::api::core::v1::{Node, Pod};
@@ -9,16 +15,6 @@ use kube::Client;
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
 use log::{debug, error, info};
-use rusoto_core::region::Region;
-use rusoto_core::request::HttpClient;
-use rusoto_core::RusotoError;
-use rusoto_credential::AutoRefreshingProvider;
-use rusoto_ec2::{
-    AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
-    DescribeInstancesRequest, DescribeInstancesResult, DisassociateAddressError, Ec2, Ec2Client,
-    ReleaseAddressError,
-};
-use rusoto_sts::WebIdentityProvider;
 
 mod eip;
 
@@ -70,15 +66,11 @@ async fn add_dns_target_annotation(
 async fn describe_instance(
     ec2_client: &Ec2Client,
     instance_id: String,
-) -> Result<DescribeInstancesResult, RusotoError<DescribeInstancesError>> {
+) -> Result<DescribeInstancesOutput, SdkError<DescribeInstancesError>> {
     ec2_client
-        .describe_instances(DescribeInstancesRequest {
-            dry_run: None,
-            filters: None,
-            instance_ids: Some(vec![instance_id]),
-            max_results: None,
-            next_token: None,
-        })
+        .describe_instances()
+        .instance_ids(instance_id)
+        .send()
         .await
 }
 
@@ -304,42 +296,32 @@ enum Error {
     #[error("Rusoto allocate_address reported error: {source}")]
     AllocateAddress {
         #[from]
-        source: rusoto_core::RusotoError<AllocateAddressError>,
+        source: SdkError<AllocateAddressError>,
     },
     #[error("Rusoto describe_instances reported error: {source}")]
     RusotoDescribeInstances {
         #[from]
-        source: rusoto_core::RusotoError<DescribeInstancesError>,
+        source: SdkError<DescribeInstancesError>,
     },
     #[error("Rusoto describe_addresses reported error: {source}")]
     RusotoDescribeAddresses {
         #[from]
-        source: rusoto_core::RusotoError<DescribeAddressesError>,
+        source: SdkError<DescribeAddressesError>,
     },
     #[error("Rusoto associate_address reported error: {source}")]
     RusotoAssociateAddress {
         #[from]
-        source: rusoto_core::RusotoError<AssociateAddressError>,
+        source: SdkError<AssociateAddressError>,
     },
     #[error("Rusoto disassociate_address reported error: {source}")]
     RusotoDisassociateAddress {
         #[from]
-        source: rusoto_core::RusotoError<DisassociateAddressError>,
+        source: SdkError<DisassociateAddressError>,
     },
     #[error("Rusoto release_address reported error: {source}")]
     RusotoReleaseAddress {
         #[from]
-        source: rusoto_core::RusotoError<ReleaseAddressError>,
-    },
-    #[error("Rusoto credentials error: {source}")]
-    RusotoCredentials {
-        #[from]
-        source: rusoto_credential::CredentialsError,
-    },
-    #[error("Rusoto TlsError error: {source}")]
-    RusotoTls {
-        #[from]
-        source: rusoto_core::request::TlsError,
+        source: SdkError<ReleaseAddressError>,
     },
 }
 
@@ -355,10 +337,14 @@ fn main() -> Result<(), Error> {
 async fn run() -> Result<(), Error> {
     debug!("Getting k8s_client...");
     let k8s_client = Client::try_default().await?;
+
     debug!("Getting ec2_client...");
-    let aws_credential_provider = AutoRefreshingProvider::new(WebIdentityProvider::from_k8s_env())?;
-    let http_client = HttpClient::new()?;
-    let ec2_client = Ec2Client::new_with(http_client, aws_credential_provider, Region::UsEast1);
+    let aws_auth_provider = aws_auth_providers::default_provider();
+    let aws_config = Config::builder()
+        .credentials_provider(aws_auth_provider)
+        .build();
+    let ec2_client = Ec2Client::from_conf(aws_config);
+
     debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
 
