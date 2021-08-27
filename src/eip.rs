@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use aws_sdk_ec2::error::{
     AllocateAddressError, AssociateAddressError, DescribeAddressesError, DisassociateAddressError,
     ReleaseAddressError,
@@ -15,14 +17,20 @@ const EIP_POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
     pod_uid: String,
+    default_tags: &HashMap<String, String>,
 ) -> Result<AllocateAddressOutput, SdkError<AllocateAddressError>> {
+    let mut tags: Vec<Tag> = default_tags
+        .iter()
+        .map(|(k, v)| Tag::builder().key(k).value(v).build())
+        .collect();
+    tags.push(Tag::builder().key(EIP_POD_UID_TAG).value(pod_uid).build());
     ec2_client
         .allocate_address()
         .domain(DomainType::Vpc)
         .tag_specifications(
             TagSpecification::builder()
                 .resource_type(ResourceType::ElasticIp)
-                .tags(Tag::builder().key(EIP_POD_UID_TAG).value(pod_uid).build())
+                .set_tags(Some(tags))
                 .build(),
         )
         .send()
