@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::time::Duration;
 
@@ -26,14 +27,21 @@ const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/t
 
 struct ContextData {
     namespace: String,
+    default_tags: HashMap<String, String>,
     k8s_client: Client,
     ec2_client: Ec2Client,
 }
 
 impl ContextData {
-    fn new(namespace: String, k8s_client: Client, ec2_client: Ec2Client) -> ContextData {
+    fn new(
+        namespace: String,
+        default_tags: HashMap<String, String>,
+        k8s_client: Client,
+        ec2_client: Ec2Client,
+    ) -> ContextData {
         ContextData {
             namespace,
+            default_tags,
             k8s_client,
             ec2_client,
         }
@@ -80,6 +88,7 @@ async fn apply(
     node_api: &Api<Node>,
     pod_api: &Api<Pod>,
     pod: Pod,
+    default_tags: &HashMap<String, String>,
 ) -> Result<ReconcilerAction, Error> {
     info!("Associating...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
@@ -89,7 +98,8 @@ async fn apply(
         .ok_or(Error::MissingAddresses)?;
     let (allocation_id, public_ip) = match addresses.len() {
         0 => {
-            let response = eip::allocate_address(ec2_client, pod_uid.to_owned()).await?;
+            let response =
+                eip::allocate_address(ec2_client, pod_uid.to_owned(), default_tags).await?;
             let allocation_id = response.allocation_id.ok_or(Error::MissingAllocationId)?;
             let public_ip = response.public_ip.ok_or(Error::MissingPublicIp)?;
             (allocation_id, public_ip)
@@ -230,13 +240,14 @@ async fn reconcile(
     context: Context<ContextData>,
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
     let namespace = &context.get_ref().namespace;
+    let default_tags = &context.get_ref().default_tags;
     let k8s_client = context.get_ref().k8s_client.clone();
     let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), namespace);
     let node_api: Api<Node> = Api::all(k8s_client.clone());
     finalizer(&pod_api, FINALIZER_NAME, pod, |event| async {
         let ec2_client = context.get_ref().ec2_client.clone();
         match event {
-            Event::Apply(pod) => apply(&ec2_client, &node_api, &pod_api, pod).await,
+            Event::Apply(pod) => apply(&ec2_client, &node_api, &pod_api, pod, default_tags).await,
             Event::Cleanup(pod) => cleanup(&ec2_client, pod).await,
         }
     })
@@ -323,6 +334,11 @@ enum Error {
         #[from]
         source: SdkError<ReleaseAddressError>,
     },
+    #[error("serde_json error: {source}")]
+    SerdeJson {
+        #[from]
+        source: serde_json::Error,
+    },
 }
 
 fn main() -> Result<(), Error> {
@@ -348,11 +364,19 @@ async fn run() -> Result<(), Error> {
     debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
 
+    debug!("Getting default tags from env...");
+    let default_tags: HashMap<String, String> =
+        serde_json::from_str(&std::env::var("DEFAULT_TAGS").unwrap_or_else(|_| "{}".to_owned()))?;
+
     debug!("Getting pod api");
     let api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
     info!("Watching for events...");
-    let context: Context<ContextData> =
-        Context::new(ContextData::new(namespace, k8s_client.clone(), ec2_client));
+    let context: Context<ContextData> = Context::new(ContextData::new(
+        namespace,
+        default_tags,
+        k8s_client.clone(),
+        ec2_client,
+    ));
     Controller::new(api, ListParams::default().labels(MANAGE_EIP_LABEL))
         .run(reconcile, on_error, context)
         .for_each(|reconciliation_result| async move {
