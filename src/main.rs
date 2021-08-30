@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::time::Duration;
 
@@ -27,6 +27,7 @@ const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/t
 
 struct ContextData {
     namespace: String,
+    cluster_name: String,
     default_tags: HashMap<String, String>,
     k8s_client: Client,
     ec2_client: Ec2Client,
@@ -35,12 +36,14 @@ struct ContextData {
 impl ContextData {
     fn new(
         namespace: String,
+        cluster_name: String,
         default_tags: HashMap<String, String>,
         k8s_client: Client,
         ec2_client: Ec2Client,
     ) -> ContextData {
         ContextData {
             namespace,
+            cluster_name,
             default_tags,
             k8s_client,
             ec2_client,
@@ -88,18 +91,25 @@ async fn apply(
     node_api: &Api<Node>,
     pod_api: &Api<Pod>,
     pod: Pod,
+    cluster_name: &str,
     default_tags: &HashMap<String, String>,
 ) -> Result<ReconcilerAction, Error> {
     info!("Associating...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
-    let addresses = eip::describe_addresses_with_pod_uid(&ec2_client, pod_uid.to_owned())
-        .await?
-        .addresses
-        .ok_or(Error::MissingAddresses)?;
+    let addresses =
+        eip::describe_addresses_with_tag_value(&ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
+            .await?
+            .addresses
+            .ok_or(Error::MissingAddresses)?;
     let (allocation_id, public_ip) = match addresses.len() {
         0 => {
-            let response =
-                eip::allocate_address(ec2_client, pod_uid.to_owned(), default_tags).await?;
+            let response = eip::allocate_address(
+                ec2_client,
+                pod_uid.to_owned(),
+                cluster_name.to_owned(),
+                default_tags,
+            )
+            .await?;
             let allocation_id = response.allocation_id.ok_or(Error::MissingAllocationId)?;
             let public_ip = response.public_ip.ok_or(Error::MissingPublicIp)?;
             (allocation_id, public_ip)
@@ -211,25 +221,57 @@ async fn apply(
 }
 
 /// Deletes AWS Elastic IP associated with a pod being destroyed.
-async fn cleanup(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
+async fn cleanup_pod_eip(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerAction, Error> {
     info!("Cleaning up...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
-    let addresses = &eip::describe_addresses_with_pod_uid(&ec2_client, pod_uid.to_owned())
-        .await?
-        .addresses
-        .ok_or(Error::MissingAddresses)?;
+    let addresses =
+        &eip::describe_addresses_with_tag_value(&ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
+            .await?
+            .addresses
+            .ok_or(Error::MissingAddresses)?;
     for address in addresses {
-        if let Some(association_id) = &address.association_id {
-            eip::disassociate_eip(&ec2_client, association_id.to_owned()).await?;
-        }
-        if let Some(allocation_id) = &address.allocation_id {
-            // Is it actually possible the allocation_id won't exist?
-            eip::release_address(&ec2_client, allocation_id.to_owned()).await?;
-        }
+        eip::disassociate_and_release_address(ec2_client, address).await?;
     }
     Ok(ReconcilerAction {
         requeue_after: None,
     })
+}
+
+/// Finds all EIPs tagged for this cluster, then compares them to the pod UIDs. If the EIP is not
+/// tagged with a pod UID, or the UID does not exist in this cluster, it deletes the EIP.
+async fn cleanup_orphan_eips(
+    ec2_client: &Ec2Client,
+    pod_api: &Api<Pod>,
+    cluster_name: &str,
+) -> Result<(), Error> {
+    let addresses = eip::describe_addresses_with_tag_value(
+        &ec2_client,
+        eip::CLUSTER_NAME_TAG,
+        cluster_name.to_owned(),
+    )
+    .await?
+    .addresses
+    .ok_or(Error::MissingAddresses)?;
+
+    let lp = ListParams::default().labels(MANAGE_EIP_LABEL);
+    let pod_uids: HashSet<String> = pod_api
+        .list(&lp)
+        .await?
+        .into_iter()
+        .filter_map(|pod| pod.metadata.uid)
+        .collect();
+
+    for address in addresses {
+        let pod_uid = eip::get_tag_from_address(&address, eip::POD_UID_TAG);
+        if pod_uid.is_none() || !pod_uids.contains(pod_uid.unwrap()) {
+            info!(
+                "Cleaning up orphaned EIP {:?} with pod uid {:?}",
+                address.allocation_id, pod_uid
+            );
+            eip::disassociate_and_release_address(ec2_client, &address).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Takes actions to create/associate an EIP with the pod or clean up if the pod is being deleted.
@@ -240,6 +282,7 @@ async fn reconcile(
     context: Context<ContextData>,
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
     let namespace = &context.get_ref().namespace;
+    let cluster_name = &context.get_ref().cluster_name;
     let default_tags = &context.get_ref().default_tags;
     let k8s_client = context.get_ref().k8s_client.clone();
     let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), namespace);
@@ -247,8 +290,18 @@ async fn reconcile(
     finalizer(&pod_api, FINALIZER_NAME, pod, |event| async {
         let ec2_client = context.get_ref().ec2_client.clone();
         match event {
-            Event::Apply(pod) => apply(&ec2_client, &node_api, &pod_api, pod, default_tags).await,
-            Event::Cleanup(pod) => cleanup(&ec2_client, pod).await,
+            Event::Apply(pod) => {
+                apply(
+                    &ec2_client,
+                    &node_api,
+                    &pod_api,
+                    pod,
+                    cluster_name,
+                    default_tags,
+                )
+                .await
+            }
+            Event::Cleanup(pod) => cleanup_pod_eip(&ec2_client, pod).await,
         }
     })
     .await
@@ -364,20 +417,29 @@ async fn run() -> Result<(), Error> {
     debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
 
+    debug!("Getting cluster name from env...");
+    let cluster_name =
+        std::env::var("CLUSTER_NAME").expect("Environment variable CLUSTER_NAME is required.");
+
     debug!("Getting default tags from env...");
     let default_tags: HashMap<String, String> =
         serde_json::from_str(&std::env::var("DEFAULT_TAGS").unwrap_or_else(|_| "{}".to_owned()))?;
 
     debug!("Getting pod api");
-    let api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
+    let pod_api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
+
+    debug!("Cleaning up any orphaned EIPs");
+    cleanup_orphan_eips(&ec2_client, &pod_api, &cluster_name).await?;
+
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(
         namespace,
+        cluster_name,
         default_tags,
         k8s_client.clone(),
         ec2_client,
     ));
-    Controller::new(api, ListParams::default().labels(MANAGE_EIP_LABEL))
+    Controller::new(pod_api, ListParams::default().labels(MANAGE_EIP_LABEL))
         .run(reconcile, on_error, context)
         .for_each(|reconciliation_result| async move {
             match reconciliation_result {

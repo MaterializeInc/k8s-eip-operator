@@ -4,26 +4,34 @@ use aws_sdk_ec2::error::{
     AllocateAddressError, AssociateAddressError, DescribeAddressesError, DisassociateAddressError,
     ReleaseAddressError,
 };
-use aws_sdk_ec2::model::{DomainType, Filter, ResourceType, Tag, TagSpecification};
+use aws_sdk_ec2::model::{Address, DomainType, Filter, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::output::{
     AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput,
     DisassociateAddressOutput, ReleaseAddressOutput,
 };
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
 
-const EIP_POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
+pub(crate) const POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
+pub(crate) const CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
 
 /// Allocates an AWS Elastic IP, and tags it with the pod uid it will later be associated with.
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
     pod_uid: String,
+    cluster_name: String,
     default_tags: &HashMap<String, String>,
 ) -> Result<AllocateAddressOutput, SdkError<AllocateAddressError>> {
     let mut tags: Vec<Tag> = default_tags
         .iter()
         .map(|(k, v)| Tag::builder().key(k).value(v).build())
         .collect();
-    tags.push(Tag::builder().key(EIP_POD_UID_TAG).value(pod_uid).build());
+    tags.push(Tag::builder().key(POD_UID_TAG).value(pod_uid).build());
+    tags.push(
+        Tag::builder()
+            .key(CLUSTER_NAME_TAG)
+            .value(cluster_name)
+            .build(),
+    );
     ec2_client
         .allocate_address()
         .domain(DomainType::Vpc)
@@ -80,16 +88,17 @@ pub(crate) async fn describe_address(
 }
 
 /// Describes any EIPs tagged with the specified pod uid.
-pub(crate) async fn describe_addresses_with_pod_uid(
+pub(crate) async fn describe_addresses_with_tag_value(
     ec2_client: &Ec2Client,
-    pod_uid: String,
+    key: &str,
+    value: String,
 ) -> Result<DescribeAddressesOutput, SdkError<DescribeAddressesError>> {
     ec2_client
         .describe_addresses()
         .filters(
             Filter::builder()
-                .name(format!("tag:{}", EIP_POD_UID_TAG))
-                .values(pod_uid.to_owned())
+                .name(format!("tag:{}", key))
+                .values(value)
                 .build(),
         )
         .send()
@@ -106,4 +115,30 @@ pub(crate) async fn disassociate_eip(
         .association_id(association_id)
         .send()
         .await
+}
+
+/// Disassociates EIP if it is attached to a NIC, then deletes the EIP.
+pub(crate) async fn disassociate_and_release_address(
+    ec2_client: &Ec2Client,
+    address: &Address,
+) -> Result<(), crate::Error> {
+    if let Some(association_id) = &address.association_id {
+        disassociate_eip(&ec2_client, association_id.to_owned()).await?;
+    }
+    if let Some(allocation_id) = &address.allocation_id {
+        // Is it actually possible the allocation_id won't exist?
+        release_address(&ec2_client, allocation_id.to_owned()).await?;
+    }
+    Ok(())
+}
+
+/// Searches tags on the supplied address and returns the value if it exists.
+pub(crate) fn get_tag_from_address<'a>(address: &'a Address, key: &str) -> Option<&'a str> {
+    address
+        .tags
+        .as_ref()?
+        .iter()
+        .find(|&tag| tag.key.as_deref() == Some(key))?
+        .value
+        .as_deref()
 }
