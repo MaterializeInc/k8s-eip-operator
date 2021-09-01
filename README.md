@@ -85,6 +85,7 @@ This operator manages the following:
       namespace: default
     ```
 5. Create a K8S Deployment.
+You must specify the `CLUSTER_NAME` environment variable. `NAMESPACE` and `DEFAULT_TAGS` are optional.
     ```yaml
     apiVersion: apps/v1
     kind: Deployment
@@ -104,22 +105,17 @@ This operator manages the following:
           containers:
           - name: eip-operator
             image: materialize/k8s-eip-operator:latest
+            env:
+            - name: NAMESPACE
+              value: default
+            - name: CLUSTER_NAME
+              value: my-example-cluster
+            - name: DEFAULT_TAGS
+              value: '{"tag1": "value1", "tag2": "value2"}'
     ```
 
 ## Usage
 Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
-
-## TODO
-- [X] Do not re-associate EIP to ENI/private IP if already associated with that ENI/private IP.
-- [X] Add Dockerfile.
-- [X] Determine K8S RBAC configs needed to run within K8S.
-- [X] Determine AWS IAM configs needed to run within K8S.
-- [X] Add CI integrations.
-    - [X] Build the binary.
-    - [X] Build the Docker image.
-    - [X] Push the image to Docker Hub.
-- [X] Add doc comments.
-- [X] Update this README.md with missing documentation.
 
 ## References
 * https://dzone.com/articles/oxidizing-the-kubernetes-operator
