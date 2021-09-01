@@ -96,6 +96,7 @@ async fn apply(
 ) -> Result<ReconcilerAction, Error> {
     info!("Associating...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
+    let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     let addresses =
         eip::describe_addresses_with_tag_value(&ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
             .await?
@@ -103,13 +104,9 @@ async fn apply(
             .ok_or(Error::MissingAddresses)?;
     let (allocation_id, public_ip) = match addresses.len() {
         0 => {
-            let response = eip::allocate_address(
-                ec2_client,
-                pod_uid.to_owned(),
-                cluster_name.to_owned(),
-                default_tags,
-            )
-            .await?;
+            let response =
+                eip::allocate_address(ec2_client, pod_uid, pod_name, cluster_name, default_tags)
+                    .await?;
             let allocation_id = response.allocation_id.ok_or(Error::MissingAllocationId)?;
             let public_ip = response.public_ip.ok_or(Error::MissingPublicIp)?;
             (allocation_id, public_ip)
@@ -207,7 +204,6 @@ async fn apply(
         )
         .await?;
     }
-    let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     add_dns_target_annotation(
         pod_api,
         pod_name.to_owned(),
