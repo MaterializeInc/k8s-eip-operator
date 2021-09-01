@@ -12,13 +12,16 @@ use aws_sdk_ec2::output::{
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
 
 pub(crate) const POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
+pub(crate) const POD_NAME_TAG: &str = "eip.aws.materialize.com/pod_name";
 pub(crate) const CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
+pub(crate) const NAME_TAG: &str = "Name";
 
 /// Allocates an AWS Elastic IP, and tags it with the pod uid it will later be associated with.
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
-    pod_uid: String,
-    cluster_name: String,
+    pod_uid: &str,
+    pod_name: &str,
+    cluster_name: &str,
     default_tags: &HashMap<String, String>,
 ) -> Result<AllocateAddressOutput, SdkError<AllocateAddressError>> {
     let mut tags: Vec<Tag> = default_tags
@@ -30,6 +33,13 @@ pub(crate) async fn allocate_address(
         Tag::builder()
             .key(CLUSTER_NAME_TAG)
             .value(cluster_name)
+            .build(),
+    );
+    tags.push(Tag::builder().key(POD_NAME_TAG).value(pod_name).build());
+    tags.push(
+        Tag::builder()
+            .key(NAME_TAG)
+            .value(format!("eip-operator:{}:{}", cluster_name, pod_name))
             .build(),
     );
     ec2_client
