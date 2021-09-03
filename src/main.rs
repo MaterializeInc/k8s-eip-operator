@@ -7,7 +7,7 @@ use aws_sdk_ec2::error::{
     DisassociateAddressError, ReleaseAddressError,
 };
 use aws_sdk_ec2::output::DescribeInstancesOutput;
-use aws_sdk_ec2::{Client as Ec2Client, Config, SdkError};
+use aws_sdk_ec2::{Client as Ec2Client, SdkError};
 use env_logger::Env;
 use futures_util::StreamExt;
 use k8s_openapi::api::core::v1::{Node, Pod};
@@ -391,7 +391,8 @@ enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info,smithy_http_tower=warn"))
+        .init();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -404,11 +405,8 @@ async fn run() -> Result<(), Error> {
     let k8s_client = Client::try_default().await?;
 
     debug!("Getting ec2_client...");
-    let aws_auth_provider = aws_auth_providers::default_provider();
-    let aws_config = Config::builder()
-        .credentials_provider(aws_auth_provider)
-        .build();
-    let ec2_client = Ec2Client::from_conf(aws_config);
+    let aws_config = aws_config::load_from_env().await;
+    let ec2_client = Ec2Client::new(&aws_config);
 
     debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
