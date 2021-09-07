@@ -16,6 +16,7 @@ use kube::Client;
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
 use log::{debug, error, info};
+use serde::Deserialize;
 
 mod eip;
 
@@ -83,6 +84,28 @@ async fn describe_instance(
         .instance_ids(instance_id)
         .send()
         .await
+}
+
+/// An annotation attached to a pod by EKS describing the branch network interfaces when using per-pod security groups.
+/// example: [{"eniId":"eni-0e42914a33ee3c5ce","ifAddress":"0e:cb:3c:0d:97:3b","privateIp":"10.1.191.190","vlanId":1,"subnetCidr":"10.1.160.0/19"}]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EniDescription {
+    eni_id: String,
+}
+
+/// Parse the vpc.amazonaws.com/pod-eni annotation if it exists, and return the ENI ID.
+fn get_eni_id_from_annotation(pod: &Pod) -> Option<String> {
+    info!("Getting ENI ID from annotation.");
+    let annotation = pod
+        .metadata
+        .annotations
+        .as_ref()?
+        .get("vpc.amazonaws.com/pod-eni")?;
+    info!("annotation: {}", annotation);
+    let eni_descriptions: Vec<EniDescription> = serde_json::from_str(&annotation).ok()?;
+    info!("eni_descriptions: {:#?}", eni_descriptions);
+    Some(eni_descriptions.first()?.eni_id.to_owned())
 }
 
 /// Creates or updates EIP associations when creating or updating a pod.
@@ -158,36 +181,43 @@ async fn apply(
         .ok_or(Error::MalformedProviderId)?
         .1;
 
-    let instance_description = describe_instance(&ec2_client, instance_id.to_owned()).await?;
+    let eni_id = match get_eni_id_from_annotation(&pod) {
+        Some(eni_id) => eni_id,
+        None => {
+            let instance_description =
+                describe_instance(&ec2_client, instance_id.to_owned()).await?;
 
-    let eni_id = instance_description
-        .reservations
-        .as_ref()
-        .ok_or(Error::MissingReservations)?[0]
-        .instances
-        .as_ref()
-        .ok_or(Error::MissingInstances)?[0]
-        .network_interfaces
-        .as_ref()
-        .ok_or(Error::MissingNetworkInterfaces)?
-        .iter()
-        .find_map(|nic| {
-            nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
-                match ip.private_ip_address.as_ref()? {
-                    x if x == pod_ip => {
-                        debug!(
-                            "Found matching NIC: {} {} {}",
-                            nic.network_interface_id.as_ref()?,
-                            pod_ip,
-                            ip.private_ip_address.as_ref()?,
-                        );
-                        Some(nic.network_interface_id.as_ref()?.to_owned())
-                    }
-                    _ => None,
-                }
-            })
-        })
-        .ok_or(Error::NoInterfaceWithThatIp)?;
+            instance_description
+                .reservations
+                .as_ref()
+                .ok_or(Error::MissingReservations)?[0]
+                .instances
+                .as_ref()
+                .ok_or(Error::MissingInstances)?[0]
+                .network_interfaces
+                .as_ref()
+                .ok_or(Error::MissingNetworkInterfaces)?
+                .iter()
+                .find_map(|nic| {
+                    nic.private_ip_addresses.as_ref()?.iter().find_map(|ip| {
+                        match ip.private_ip_address.as_ref()? {
+                            x if x == pod_ip => {
+                                debug!(
+                                    "Found matching NIC: {} {} {}",
+                                    nic.network_interface_id.as_ref()?,
+                                    pod_ip,
+                                    ip.private_ip_address.as_ref()?,
+                                );
+                                Some(nic.network_interface_id.as_ref()?.to_owned())
+                            }
+                            _ => None,
+                        }
+                    })
+                })
+                .ok_or(Error::NoInterfaceWithThatIp)?
+        }
+    };
+
     let eip_description = eip::describe_address(&ec2_client, allocation_id.to_owned())
         .await?
         .addresses
