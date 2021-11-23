@@ -133,11 +133,11 @@ pub(crate) async fn disassociate_and_release_address(
     address: &Address,
 ) -> Result<(), crate::Error> {
     if let Some(association_id) = &address.association_id {
-        disassociate_eip(&ec2_client, association_id.to_owned()).await?;
+        disassociate_eip(ec2_client, association_id.to_owned()).await?;
     }
     if let Some(allocation_id) = &address.allocation_id {
         // Is it actually possible the allocation_id won't exist?
-        release_address(&ec2_client, allocation_id.to_owned()).await?;
+        release_address(ec2_client, allocation_id.to_owned()).await?;
     }
     Ok(())
 }
