@@ -103,7 +103,7 @@ fn get_eni_id_from_annotation(pod: &Pod) -> Option<String> {
         .as_ref()?
         .get("vpc.amazonaws.com/pod-eni")?;
     info!("annotation: {}", annotation);
-    let eni_descriptions: Vec<EniDescription> = serde_json::from_str(&annotation).ok()?;
+    let eni_descriptions: Vec<EniDescription> = serde_json::from_str(annotation).ok()?;
     info!("eni_descriptions: {:#?}", eni_descriptions);
     Some(eni_descriptions.first()?.eni_id.to_owned())
 }
@@ -121,7 +121,7 @@ async fn apply(
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     let addresses =
-        eip::describe_addresses_with_tag_value(&ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
+        eip::describe_addresses_with_tag_value(ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
             .await?
             .addresses
             .ok_or(Error::MissingAddresses)?;
@@ -185,7 +185,7 @@ async fn apply(
         Some(eni_id) => eni_id,
         None => {
             let instance_description =
-                describe_instance(&ec2_client, instance_id.to_owned()).await?;
+                describe_instance(ec2_client, instance_id.to_owned()).await?;
 
             instance_description
                 .reservations
@@ -218,7 +218,7 @@ async fn apply(
         }
     };
 
-    let eip_description = eip::describe_address(&ec2_client, allocation_id.to_owned())
+    let eip_description = eip::describe_address(ec2_client, allocation_id.to_owned())
         .await?
         .addresses
         .ok_or(Error::MissingAddresses)?
@@ -227,7 +227,7 @@ async fn apply(
         || eip_description.private_ip_address != Some(pod_ip.to_owned())
     {
         eip::associate_eip_with_pod_eni(
-            &ec2_client,
+            ec2_client,
             allocation_id.to_owned(),
             eni_id,
             pod_ip.to_owned(),
@@ -251,7 +251,7 @@ async fn cleanup_pod_eip(ec2_client: &Ec2Client, pod: Pod) -> Result<ReconcilerA
     info!("Cleaning up...");
     let pod_uid = pod.metadata.uid.as_ref().ok_or(Error::MissingPodUid)?;
     let addresses =
-        &eip::describe_addresses_with_tag_value(&ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
+        &eip::describe_addresses_with_tag_value(ec2_client, eip::POD_UID_TAG, pod_uid.to_owned())
             .await?
             .addresses
             .ok_or(Error::MissingAddresses)?;
@@ -271,7 +271,7 @@ async fn cleanup_orphan_eips(
     cluster_name: &str,
 ) -> Result<(), Error> {
     let addresses = eip::describe_addresses_with_tag_value(
-        &ec2_client,
+        ec2_client,
         eip::CLUSTER_NAME_TAG,
         cluster_name.to_owned(),
     )
