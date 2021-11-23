@@ -1,4 +1,4 @@
-FROM rust:1.53-slim-buster as builder
+FROM rust:1.56.1-slim-buster as builder
 RUN apt-get update && apt-get -qy install pkg-config libssl-dev && apt-get clean
 WORKDIR /workdir
 COPY . .
