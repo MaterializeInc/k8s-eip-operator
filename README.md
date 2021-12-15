@@ -3,6 +3,7 @@
 Manage external connections to Kubernetes pods using AWS Elastic IPs (EIPs).
 
 This operator manages the following:
+* Creation of an EIP Custom Resource Definition in K8S.
 * Creation/destruction of EIP allocations in AWS.
     * These EIPs will be tagged with the pod uid they will be assigned to (`eip.aws.materialize.com/pod_uid`) for later identification.
 * Association/disassociation of the EIP to the Elastic Network Interface (ENI) on the private IP of the pod.
@@ -115,7 +116,16 @@ You must specify the `CLUSTER_NAME` environment variable. `NAMESPACE` and `DEFAU
     ```
 
 ## Usage
-Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
+Instantiate an Eip Kubernetes object, specifying the `podName` in the spec.
+```yaml
+apiVersion: "cloud.materialize.com/v1"
+kind: Eip
+metadata:
+  name: my-new-eip
+spec:
+  podName: my-pod
+```
+Add the `eip.aws.materialize.com/manage=true` label to the pod with name matching the `podName` specified above.
 
 ## References
 * https://dzone.com/articles/oxidizing-the-kubernetes-operator

@@ -6,20 +6,22 @@ use aws_sdk_ec2::error::{
 };
 use aws_sdk_ec2::model::{Address, DomainType, Filter, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::output::{
-    AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput,
-    DisassociateAddressOutput, ReleaseAddressOutput,
+    AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput, ReleaseAddressOutput,
 };
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
+use log::info;
 
-pub(crate) const POD_UID_TAG: &str = "eip.aws.materialize.com/pod_uid";
 pub(crate) const POD_NAME_TAG: &str = "eip.aws.materialize.com/pod_name";
+pub(crate) const EIP_UID_TAG: &str = "eip.aws.materialize.com/eip_uid";
+pub(crate) const EIP_NAME_TAG: &str = "eip.aws.materialize.com/eip_name";
 pub(crate) const CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
 pub(crate) const NAME_TAG: &str = "Name";
 
 /// Allocates an AWS Elastic IP, and tags it with the pod uid it will later be associated with.
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
-    pod_uid: &str,
+    eip_uid: &str,
+    eip_name: &str,
     pod_name: &str,
     cluster_name: &str,
     default_tags: &HashMap<String, String>,
@@ -28,7 +30,8 @@ pub(crate) async fn allocate_address(
         .iter()
         .map(|(k, v)| Tag::builder().key(k).value(v).build())
         .collect();
-    tags.push(Tag::builder().key(POD_UID_TAG).value(pod_uid).build());
+    tags.push(Tag::builder().key(EIP_UID_TAG).value(eip_uid).build());
+    tags.push(Tag::builder().key(EIP_NAME_TAG).value(eip_name).build());
     tags.push(
         Tag::builder()
             .key(CLUSTER_NAME_TAG)
@@ -39,7 +42,7 @@ pub(crate) async fn allocate_address(
     tags.push(
         Tag::builder()
             .key(NAME_TAG)
-            .value(format!("eip-operator:{}:{}", cluster_name, pod_name))
+            .value(format!("eip-operator:{}:{}", cluster_name, eip_name))
             .build(),
     );
     ec2_client
@@ -119,12 +122,20 @@ pub(crate) async fn describe_addresses_with_tag_value(
 pub(crate) async fn disassociate_eip(
     ec2_client: &Ec2Client,
     association_id: String,
-) -> Result<DisassociateAddressOutput, SdkError<DisassociateAddressError>> {
-    ec2_client
+) -> Result<(), SdkError<DisassociateAddressError>> {
+    match ec2_client
         .disassociate_address()
-        .association_id(association_id)
+        .association_id(&association_id)
         .send()
         .await
+    {
+        Ok(_) => Ok(()),
+        Err(e) if e.to_string().contains("InvalidAssociationID.NotFound") => {
+            info!("Already disassociated: {}", association_id);
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Disassociates EIP if it is attached to a NIC, then deletes the EIP.
