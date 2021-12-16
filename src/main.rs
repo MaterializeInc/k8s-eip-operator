@@ -6,14 +6,16 @@ use aws_sdk_ec2::error::{
     AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
     DisassociateAddressError, ReleaseAddressError,
 };
+use aws_sdk_ec2::model::Filter;
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
 use env_logger::Env;
 use futures_util::StreamExt;
+use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::{Node, Pod};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use kube::api::{Api, ListParams, Patch, PatchParams};
-use kube::{Client, CustomResourceExt};
+use kube::api::{Api, DeleteParams, ListParams, Patch, PatchParams};
+use kube::{Client, CustomResourceExt, Resource, ResourceExt};
 use kube_derive::CustomResource;
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
@@ -26,12 +28,16 @@ use tokio::time::error::Elapsed;
 
 mod eip;
 
-const FIELD_MANAGER: &str = "eip.aws.materialize.com";
-const MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
-const POD_FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
-const EIP_API_VERSION: &str = "cloud.materialize.com/v1";
-const EIP_FINALIZER_NAME: &str = "eip.aws.materialize.com/destroy";
-const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.aws.materialize.com/allocation_id";
+const LEGACY_MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
+const LEGACY_POD_FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
+
+const FIELD_MANAGER: &str = "eip.materialize.cloud";
+const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
+const AUTOCREATE_EIP_LABEL: &str = "eip.materialize.cloud/autocreate_eip";
+const POD_FINALIZER_NAME: &str = "eip.materialize.cloud/disassociate";
+const EIP_API_VERSION: &str = "materialize.cloud/v1";
+const EIP_FINALIZER_NAME: &str = "eip.materialize.cloud/destroy";
+const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
 
 struct ContextData {
@@ -65,7 +71,7 @@ impl ContextData {
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[kube(
-    group = "cloud.materialize.com",
+    group = "materialize.cloud",
     version = "v1",
     kind = "Eip",
     singular = "eip",
@@ -103,14 +109,14 @@ async fn register_eip_custom_resource(k8s_client: Client) -> Result<(), Error> {
     let crd_patch = Patch::Apply(data);
     crd_api
         .patch(
-            "eips.cloud.materialize.com",
+            "eips.materialize.cloud",
             &PatchParams::apply(FIELD_MANAGER),
             &crd_patch,
         )
         .await?;
     let establish = await_condition(
         crd_api.clone(),
-        "eips.cloud.materialize.com",
+        "eips.materialize.cloud",
         conditions::is_crd_established(),
     );
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), establish).await?;
@@ -242,6 +248,44 @@ fn get_eni_id_from_annotation(pod: &Pod) -> Option<String> {
     Some(eni_descriptions.first()?.eni_id.to_owned())
 }
 
+/// Checks if the autocreate label is set to true on a pod.
+fn should_autocreate_eip(pod: &Pod) -> bool {
+    pod.metadata
+        .labels
+        .as_ref()
+        .and_then(|label| label.get(AUTOCREATE_EIP_LABEL).map(|s| (*s).as_ref()))
+        .unwrap_or("false")
+        .to_lowercase()
+        == "true"
+}
+
+/// Creates a K8S Eip resource.
+async fn create_k8s_eip(eip_api: &Api<Eip>, pod_name: &str) -> Result<Eip, kube::Error> {
+    info!("Applying K8S Eip: {}", pod_name);
+    let patch = Eip::new(
+        pod_name,
+        EipSpec {
+            pod_name: pod_name.to_owned(),
+        },
+    );
+    let patch = Patch::Apply(&patch);
+    let params = PatchParams::apply(FIELD_MANAGER);
+    eip_api.patch(&pod_name, &params, &patch).await
+}
+
+/// Deletes a K8S Eip resource, if it exists.
+async fn delete_k8s_eip(eip_api: &Api<Eip>, name: &str) -> Result<(), kube::Error> {
+    info!("Deleting K8S Eip: {}", name);
+    match eip_api.delete(&name, &DeleteParams::default()).await {
+        Ok(_) => Ok(()),
+        Err(kube::Error::Api(e)) if e.code == 404 => {
+            info!("Eip already deleted: {}", name);
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Creates or updates EIP associations when creating or updating a pod.
 async fn apply_pod(
     ec2_client: &Ec2Client,
@@ -252,6 +296,9 @@ async fn apply_pod(
 ) -> Result<ReconcilerAction, Error> {
     info!("Associating...");
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
+    if should_autocreate_eip(&pod) {
+        create_k8s_eip(eip_api, &pod_name).await?;
+    }
     let pod_ip = pod
         .status
         .as_ref()
@@ -368,6 +415,7 @@ async fn apply_eip(
     eip_api: &Api<Eip>,
     eip: Eip,
     cluster_name: &str,
+    namespace: &str,
     default_tags: &HashMap<String, String>,
 ) -> Result<ReconcilerAction, Error> {
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
@@ -386,6 +434,7 @@ async fn apply_eip(
                 eip_name,
                 &pod_name,
                 cluster_name,
+                namespace,
                 default_tags,
             )
             .await?;
@@ -449,6 +498,9 @@ async fn cleanup_pod(
         )
         .await?;
     };
+    if should_autocreate_eip(&pod) {
+        delete_k8s_eip(eip_api, &pod_name).await?;
+    }
     Ok(ReconcilerAction {
         requeue_after: None,
     })
@@ -475,16 +527,39 @@ async fn cleanup_eip(ec2_client: &Ec2Client, eip: Eip) -> Result<ReconcilerActio
 async fn cleanup_orphan_eips(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
+    pod_api: &Api<Pod>,
     cluster_name: &str,
+    namespace: &str,
 ) -> Result<(), Error> {
-    let addresses = eip::describe_addresses_with_tag_value(
+    let mut addresses = ec2_client
+        .describe_addresses()
+        .filters(
+            Filter::builder()
+                .name(format!("tag:{}", eip::CLUSTER_NAME_TAG))
+                .values(cluster_name.to_owned())
+                .build(),
+        )
+        .filters(
+            Filter::builder()
+                .name(format!("tag:{}", eip::NAMESPACE_TAG))
+                .values(namespace.to_owned())
+                .build(),
+        )
+        .send()
+        .await?
+        .addresses
+        .ok_or(Error::MissingAddresses)?;
+
+    let mut legacy_addresses = eip::describe_addresses_with_tag_value(
         ec2_client,
-        eip::CLUSTER_NAME_TAG,
+        eip::LEGACY_CLUSTER_NAME_TAG,
         cluster_name.to_owned(),
     )
     .await?
     .addresses
     .ok_or(Error::MissingAddresses)?;
+
+    addresses.append(&mut legacy_addresses);
 
     let eip_uids: HashSet<String> = eip_api
         .list(&ListParams::default())
@@ -501,6 +576,37 @@ async fn cleanup_orphan_eips(
                 address.allocation_id, eip_uid
             );
             eip::disassociate_and_release_address(ec2_client, &address).await?;
+        }
+    }
+
+    // Manually remove the old finalizer, since we just removed the EIPs.
+    // https://docs.rs/kube-runtime/0.65.0/src/kube_runtime/finalizer.rs.html#133
+    let legacy_pods = pod_api
+        .list(&ListParams::default().labels(LEGACY_MANAGE_EIP_LABEL))
+        .await?;
+    for pod in legacy_pods {
+        if let Some(position) = pod
+            .finalizers()
+            .into_iter()
+            .position(|s| s == LEGACY_POD_FINALIZER_NAME)
+        {
+            let pod_name = pod.meta().name.as_ref().ok_or(Error::MissingPodName)?;
+            let finalizer_path = format!("/metadata/finalizers/{}", position);
+            pod_api
+                .patch::<Pod>(
+                    pod_name,
+                    &PatchParams::default(),
+                    &Patch::Json(json_patch::Patch(vec![
+                        PatchOperation::Test(TestOperation {
+                            path: finalizer_path.clone(),
+                            value: LEGACY_POD_FINALIZER_NAME.into(),
+                        }),
+                        PatchOperation::Remove(RemoveOperation {
+                            path: finalizer_path,
+                        }),
+                    ])),
+                )
+                .await?;
         }
     }
     Ok(())
@@ -544,7 +650,15 @@ async fn reconcile_eip(
     finalizer(&eip_api, EIP_FINALIZER_NAME, eip, |event| async {
         match event {
             Event::Apply(eip) => {
-                apply_eip(&ec2_client, &eip_api, eip, cluster_name, default_tags).await
+                apply_eip(
+                    &ec2_client,
+                    &eip_api,
+                    eip,
+                    cluster_name,
+                    namespace,
+                    default_tags,
+                )
+                .await
             }
             Event::Cleanup(eip) => cleanup_eip(&ec2_client, eip).await,
         }
@@ -692,7 +806,7 @@ async fn run() -> Result<(), Error> {
     let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), &namespace);
 
     debug!("Cleaning up any orphaned EIPs");
-    cleanup_orphan_eips(&ec2_client, &eip_api, &cluster_name).await?;
+    cleanup_orphan_eips(&ec2_client, &eip_api, &pod_api, &cluster_name, &namespace).await?;
 
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(

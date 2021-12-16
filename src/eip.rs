@@ -11,10 +11,13 @@ use aws_sdk_ec2::output::{
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
 use log::info;
 
-pub(crate) const POD_NAME_TAG: &str = "eip.aws.materialize.com/pod_name";
-pub(crate) const EIP_UID_TAG: &str = "eip.aws.materialize.com/eip_uid";
-pub(crate) const EIP_NAME_TAG: &str = "eip.aws.materialize.com/eip_name";
-pub(crate) const CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
+pub(crate) const LEGACY_CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
+
+pub(crate) const POD_NAME_TAG: &str = "eip.materialize.cloud/pod_name";
+pub(crate) const EIP_UID_TAG: &str = "eip.materialize.cloud/eip_uid";
+pub(crate) const EIP_NAME_TAG: &str = "eip.materialize.cloud/eip_name";
+pub(crate) const CLUSTER_NAME_TAG: &str = "eip.materialize.cloud/cluster_name";
+pub(crate) const NAMESPACE_TAG: &str = "eip.materialize.cloud/namespace";
 pub(crate) const NAME_TAG: &str = "Name";
 
 /// Allocates an AWS Elastic IP, and tags it with the pod uid it will later be associated with.
@@ -24,6 +27,7 @@ pub(crate) async fn allocate_address(
     eip_name: &str,
     pod_name: &str,
     cluster_name: &str,
+    namespace: &str,
     default_tags: &HashMap<String, String>,
 ) -> Result<AllocateAddressOutput, SdkError<AllocateAddressError>> {
     let mut tags: Vec<Tag> = default_tags
@@ -32,6 +36,7 @@ pub(crate) async fn allocate_address(
         .collect();
     tags.push(Tag::builder().key(EIP_UID_TAG).value(eip_uid).build());
     tags.push(Tag::builder().key(EIP_NAME_TAG).value(eip_name).build());
+    tags.push(Tag::builder().key(NAMESPACE_TAG).value(namespace).build());
     tags.push(
         Tag::builder()
             .key(CLUSTER_NAME_TAG)
@@ -39,10 +44,14 @@ pub(crate) async fn allocate_address(
             .build(),
     );
     tags.push(Tag::builder().key(POD_NAME_TAG).value(pod_name).build());
+
     tags.push(
         Tag::builder()
             .key(NAME_TAG)
-            .value(format!("eip-operator:{}:{}", cluster_name, eip_name))
+            .value(format!(
+                "eip-operator:{}:{}:{}",
+                cluster_name, namespace, eip_name
+            ))
             .build(),
     );
     ec2_client
