@@ -270,13 +270,13 @@ async fn create_k8s_eip(eip_api: &Api<Eip>, pod_name: &str) -> Result<Eip, kube:
     );
     let patch = Patch::Apply(&patch);
     let params = PatchParams::apply(FIELD_MANAGER);
-    eip_api.patch(&pod_name, &params, &patch).await
+    eip_api.patch(pod_name, &params, &patch).await
 }
 
 /// Deletes a K8S Eip resource, if it exists.
 async fn delete_k8s_eip(eip_api: &Api<Eip>, name: &str) -> Result<(), kube::Error> {
     info!("Deleting K8S Eip: {}", name);
-    match eip_api.delete(&name, &DeleteParams::default()).await {
+    match eip_api.delete(name, &DeleteParams::default()).await {
         Ok(_) => Ok(()),
         Err(kube::Error::Api(e)) if e.code == 404 => {
             info!("Eip already deleted: {}", name);
@@ -297,7 +297,7 @@ async fn apply_pod(
     info!("Associating...");
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     if should_autocreate_eip(&pod) {
-        create_k8s_eip(eip_api, &pod_name).await?;
+        create_k8s_eip(eip_api, pod_name).await?;
     }
     let pod_ip = pod
         .status
@@ -499,7 +499,7 @@ async fn cleanup_pod(
         .await?;
     };
     if should_autocreate_eip(&pod) {
-        delete_k8s_eip(eip_api, &pod_name).await?;
+        delete_k8s_eip(eip_api, pod_name).await?;
     }
     Ok(ReconcilerAction {
         requeue_after: None,
@@ -587,7 +587,7 @@ async fn cleanup_orphan_eips(
     for pod in legacy_pods {
         if let Some(position) = pod
             .finalizers()
-            .into_iter()
+            .iter()
             .position(|s| s == LEGACY_POD_FINALIZER_NAME)
         {
             let pod_name = pod.meta().name.as_ref().ok_or(Error::MissingPodName)?;
