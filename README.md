@@ -3,8 +3,9 @@
 Manage external connections to Kubernetes pods using AWS Elastic IPs (EIPs).
 
 This operator manages the following:
+* Creation of an EIP Custom Resource Definition in K8S.
 * Creation/destruction of EIP allocations in AWS.
-    * These EIPs will be tagged with the pod uid they will be assigned to (`eip.aws.materialize.com/pod_uid`) for later identification.
+    * These AWS EIPs will be tagged with the K8S EIP uid they will be assigned to (`eip.materialize.cloud/eip_uid`) for later identification.
 * Association/disassociation of the EIP to the Elastic Network Interface (ENI) on the private IP of the pod.
 * Annotation of `external-dns.alpha.kubernetes.io/target` on the pod, so that the `external-dns` operator knows to use the IP of the EIP instead of the external IP of the primary ENI on the host.
 
@@ -115,7 +116,27 @@ You must specify the `CLUSTER_NAME` environment variable. `NAMESPACE` and `DEFAU
     ```
 
 ## Usage
-Add the `eip.aws.materialize.com/manage=true` label to any pods that you want this to manage.
+
+##### A. If you want your EIP to survive beyond the lifetime of the pod (ie: for static reservations when updating a statefulset):
+
+Instantiate an Eip Kubernetes object, specifying the `podName` in the spec.
+```yaml
+apiVersion: "materialize.cloud/v1"
+kind: Eip
+metadata:
+  name: my-new-eip
+spec:
+  podName: my-pod
+```
+Add the `eip.materialize.cloud/manage=true` label to the pod with name matching the `podName` specified above.
+
+##### B. If you don't care about getting a new IP if the pod gets recreated:
+
+No need to manually create the Eip in this case, the operator can do it for you.
+
+Add both the `eip.materialize.cloud/manage=true` and `eip.materialize.cloud/autocreate_eip=true` labels to your pod.
+
+Do NOT manually create the Eip Kubernetes object if setting the `eip.materialize.cloud/autocreate_eip=true` label, or the two objects will fight over your pod.
 
 ## References
 * https://dzone.com/articles/oxidizing-the-kubernetes-operator

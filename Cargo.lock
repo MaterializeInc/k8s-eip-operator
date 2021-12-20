@@ -476,12 +476,13 @@ checksum = "ee2626afccd7561a06cf1367e2950c4718ea04565e20fb5029b6c7d8ad09abcf"
 
 [[package]]
 name = "eip-operator"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aws-config",
  "aws-sdk-ec2",
  "env_logger",
  "futures-util",
+ "json-patch",
  "k8s-openapi",
  "kube",
  "kube-derive",
