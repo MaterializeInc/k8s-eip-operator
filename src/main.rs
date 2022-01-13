@@ -9,7 +9,6 @@ use aws_sdk_ec2::error::{
 use aws_sdk_ec2::model::Filter;
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
-use env_logger::Env;
 use futures_util::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::{Node, Pod};
@@ -20,11 +19,19 @@ use kube_derive::CustomResource;
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
-use log::{debug, error, info, warn};
+use opentelemetry::sdk::trace::Config;
+use opentelemetry::sdk::Resource as OtelResource;
+use opentelemetry::Key;
+use opentelemetry_otlp::WithExportConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::join;
 use tokio::time::error::Elapsed;
+use tracing::{debug, event, info, instrument, Level, Metadata, Subscriber};
+use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::fmt;
+use tracing_subscriber::layer::{Context as LayerContext, Filter as LayerFilter, SubscriberExt};
+use tracing_subscriber::prelude::*;
 
 mod eip;
 
@@ -46,6 +53,16 @@ struct ContextData {
     default_tags: HashMap<String, String>,
     k8s_client: Client,
     ec2_client: Ec2Client,
+}
+
+impl std::fmt::Debug for ContextData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContextData")
+            .field("namespace", &self.namespace)
+            .field("cluster_name", &self.cluster_name)
+            .field("default_tags", &self.default_tags)
+            .finish()
+    }
 }
 
 impl ContextData {
@@ -100,12 +117,13 @@ struct EipStatus {
 
 /// Registers the Eip custom resource with Kubernetes,
 /// the specification of which is automatically derived from the structs.
+#[instrument(skip(k8s_client), err, fields(crd_data))]
 async fn register_eip_custom_resource(k8s_client: Client) -> Result<(), Error> {
     // https://github.com/kube-rs/kube-rs/blob/master/examples/crd_derive_schema.rs#L224
-    debug!("Getting crd api");
     let crd_api = Api::<CustomResourceDefinition>::all(k8s_client);
     let data = serde_json::json!(Eip::crd());
-    warn!("CRD data:\n{}", data);
+    let crd_json = serde_json::to_string(&data)?;
+    event!(Level::INFO, crd_json = %crd_json);
     let crd_patch = Patch::Apply(data);
     crd_api
         .patch(
@@ -124,6 +142,7 @@ async fn register_eip_custom_resource(k8s_client: Client) -> Result<(), Error> {
 }
 
 /// Applies annotation to pod specifying the target IP for external-dns.
+#[instrument(skip(pod_api), err)]
 async fn add_dns_target_annotation(
     pod_api: &Api<Pod>,
     pod_name: String,
@@ -146,13 +165,14 @@ async fn add_dns_target_annotation(
 }
 
 /// Sets the allocationId and publicIpAddress fields in the Eip status.
+#[instrument(skip(eip_api), err)]
 async fn set_eip_status_created(
     eip_api: &Api<Eip>,
     eip_name: &str,
     allocation_id: String,
     public_ip_address: String,
 ) -> Result<Eip, kube::Error> {
-    info!("Updating status for created EIP: {}", eip_name);
+    event!(Level::INFO, "Updating status for created EIP.");
     let patch = serde_json::json!({
         "apiVersion": EIP_API_VERSION,
         "kind": "Eip",
@@ -165,19 +185,20 @@ async fn set_eip_status_created(
     let params = PatchParams::default();
     let result = eip_api.patch_status(eip_name, &params, &patch).await;
     if result.is_ok() {
-        info!("Done updating status");
+        event!(Level::INFO, "Done updating status for created EIP.");
     }
     result
 }
 
 /// Sets the eni and privateIpAddress fields in the Eip status.
+#[instrument(skip(eip_api), err)]
 async fn set_eip_status_attached(
     eip_api: &Api<Eip>,
     eip_name: &str,
     eni: String,
     private_ip_address: String,
 ) -> Result<Eip, kube::Error> {
-    info!("Updating status for attached EIP: {}", eip_name);
+    event!(Level::INFO, "Updating status for attached EIP.");
     let patch = serde_json::json!({
         "apiVersion": EIP_API_VERSION,
         "kind": "Eip",
@@ -190,14 +211,15 @@ async fn set_eip_status_attached(
     let params = PatchParams::default();
     let result = eip_api.patch_status(eip_name, &params, &patch).await;
     if result.is_ok() {
-        info!("Done updating status");
+        event!(Level::INFO, "Done updating status for attached EIP.");
     }
     result
 }
 
 /// Unsets the eni and privateIpAddress fields in the Eip status.
+#[instrument(skip(eip_api), err)]
 async fn set_eip_status_detached(eip_api: &Api<Eip>, eip_name: &str) -> Result<Eip, kube::Error> {
-    info!("Updating status for detached EIP: {}", eip_name);
+    event!(Level::INFO, "Updating status for detached EIP.");
     let patch = serde_json::json!({
         "apiVersion": EIP_API_VERSION,
         "kind": "Eip",
@@ -210,12 +232,13 @@ async fn set_eip_status_detached(eip_api: &Api<Eip>, eip_name: &str) -> Result<E
     let params = PatchParams::default();
     let result = eip_api.patch_status(eip_name, &params, &patch).await;
     if result.is_ok() {
-        info!("Done updating status");
+        event!(Level::INFO, "Done updating status for detached EIP.");
     }
     result
 }
 
 /// Describes an AWS EC2 instance with the supplied instance_id.
+#[instrument(skip(ec2_client), err)]
 async fn describe_instance(
     ec2_client: &Ec2Client,
     instance_id: String,
@@ -236,14 +259,15 @@ struct EniDescription {
 }
 
 /// Parse the vpc.amazonaws.com/pod-eni annotation if it exists, and return the ENI ID.
+#[instrument(skip(pod))]
 fn get_eni_id_from_annotation(pod: &Pod) -> Option<String> {
-    info!("Getting ENI ID from annotation.");
+    event!(Level::INFO, "Getting ENI ID from annotation.");
     let annotation = pod
         .metadata
         .annotations
         .as_ref()?
         .get("vpc.amazonaws.com/pod-eni")?;
-    info!("annotation: {}", annotation);
+    event!(Level::INFO, annotation = %annotation);
     let eni_descriptions: Vec<EniDescription> = serde_json::from_str(annotation).ok()?;
     Some(eni_descriptions.first()?.eni_id.to_owned())
 }
@@ -260,8 +284,9 @@ fn should_autocreate_eip(pod: &Pod) -> bool {
 }
 
 /// Creates a K8S Eip resource.
+#[instrument(skip(eip_api), err)]
 async fn create_k8s_eip(eip_api: &Api<Eip>, pod_name: &str) -> Result<Eip, kube::Error> {
-    info!("Applying K8S Eip: {}", pod_name);
+    //info!("Applying K8S Eip: {}", pod_name);
     let patch = Eip::new(
         pod_name,
         EipSpec {
@@ -274,8 +299,9 @@ async fn create_k8s_eip(eip_api: &Api<Eip>, pod_name: &str) -> Result<Eip, kube:
 }
 
 /// Deletes a K8S Eip resource, if it exists.
+#[instrument(skip(eip_api), err)]
 async fn delete_k8s_eip(eip_api: &Api<Eip>, name: &str) -> Result<(), kube::Error> {
-    info!("Deleting K8S Eip: {}", name);
+    //info!("Deleting K8S Eip: {}", name);
     match eip_api.delete(name, &DeleteParams::default()).await {
         Ok(_) => Ok(()),
         Err(kube::Error::Api(e)) if e.code == 404 => {
@@ -287,6 +313,7 @@ async fn delete_k8s_eip(eip_api: &Api<Eip>, name: &str) -> Result<(), kube::Erro
 }
 
 /// Creates or updates EIP associations when creating or updating a pod.
+#[instrument(skip(ec2_client, node_api, eip_api, pod_api, pod), err)]
 async fn apply_pod(
     ec2_client: &Ec2Client,
     node_api: &Api<Node>,
@@ -294,9 +321,10 @@ async fn apply_pod(
     pod_api: &Api<Pod>,
     pod: Pod,
 ) -> Result<ReconcilerAction, Error> {
-    info!("Associating...");
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
+    event!(Level::INFO, pod_name = %pod_name, "Applying pod.");
     if should_autocreate_eip(&pod) {
+        event!(Level::INFO, should_autocreate_eip = true);
         create_k8s_eip(eip_api, pod_name).await?;
     }
     let pod_ip = pod
@@ -410,6 +438,7 @@ async fn apply_pod(
     })
 }
 
+#[instrument(skip(ec2_client, eip_api, eip), err)]
 async fn apply_eip(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
@@ -421,6 +450,7 @@ async fn apply_eip(
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
     let eip_name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
     let pod_name = eip.spec.pod_name;
+    event!(Level::INFO, %eip_uid, %eip_name, %pod_name, "Applying EIP.");
     let addresses =
         eip::describe_addresses_with_tag_value(ec2_client, eip::EIP_UID_TAG, eip_uid.to_owned())
             .await?
@@ -464,13 +494,14 @@ async fn apply_eip(
 }
 
 /// Deletes AWS Elastic IP associated with a pod being destroyed.
+#[instrument(skip(ec2_client, eip_api, pod), err)]
 async fn cleanup_pod(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
     pod: Pod,
 ) -> Result<ReconcilerAction, Error> {
-    info!("Cleaning up pod...");
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
+    event!(Level::INFO, pod_name = %pod_name, "Cleaning up pod.");
     let all_eips = eip_api.list(&ListParams::default()).await?.items;
     let eip = all_eips
         .into_iter()
@@ -499,15 +530,19 @@ async fn cleanup_pod(
         .await?;
     };
     if should_autocreate_eip(&pod) {
+        event!(Level::INFO, should_autocreate_eip = true);
         delete_k8s_eip(eip_api, pod_name).await?;
     }
     Ok(ReconcilerAction {
         requeue_after: None,
     })
 }
+
+#[instrument(skip(ec2_client, eip), err)]
 async fn cleanup_eip(ec2_client: &Ec2Client, eip: Eip) -> Result<ReconcilerAction, Error> {
-    info!("Cleaning up eip...");
+    let eip_name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
+    event!(Level::INFO, eip_name = %eip_name, eip_uid = %eip_uid, "Cleaning up eip.");
     let addresses =
         eip::describe_addresses_with_tag_value(ec2_client, eip::EIP_UID_TAG, eip_uid.to_owned())
             .await?
@@ -524,6 +559,7 @@ async fn cleanup_eip(ec2_client: &Ec2Client, eip: Eip) -> Result<ReconcilerActio
 
 /// Finds all EIPs tagged for this cluster, then compares them to the pod UIDs. If the EIP is not
 /// tagged with a pod UID, or the UID does not exist in this cluster, it deletes the EIP.
+#[instrument(skip(ec2_client, eip_api, pod_api), err)]
 async fn cleanup_orphan_eips(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
@@ -571,9 +607,10 @@ async fn cleanup_orphan_eips(
     for address in addresses {
         let eip_uid = eip::get_tag_from_address(&address, eip::EIP_UID_TAG);
         if eip_uid.is_none() || !eip_uids.contains(eip_uid.unwrap()) {
-            info!(
-                "Cleaning up orphaned EIP {:?} with uid {:?}",
-                address.allocation_id, eip_uid
+            event!(Level::WARN,
+                allocation_id = %address.allocation_id.as_deref().unwrap_or("None"),
+                eip_uid = %eip_uid.unwrap_or("None"),
+                "Cleaning up orphaned EIP",
             );
             eip::disassociate_and_release_address(ec2_client, &address).await?;
         }
@@ -615,6 +652,7 @@ async fn cleanup_orphan_eips(
 /// Takes actions to create/associate an EIP with the pod or clean up if the pod is being deleted.
 /// Wraps these operations with a finalizer to ensure the pod is not deleted without cleaning up
 /// the Elastic IP associated with it.
+#[instrument(skip(pod, context), err)]
 async fn reconcile_pod(
     pod: Pod,
     context: Context<ContextData>,
@@ -637,6 +675,7 @@ async fn reconcile_pod(
 /// Takes actions to create an EIP or clean up if the Eip K8S resource is being deleted.
 /// Wraps these operations with a finalizer to ensure the K8S Eip is not deleted without
 /// cleaning up the Elastic IP associated with it.
+#[instrument(skip(eip, context), err)]
 async fn reconcile_eip(
     eip: Eip,
     context: Context<ContextData>,
@@ -767,15 +806,57 @@ enum Error {
 }
 
 fn main() -> Result<(), Error> {
-    env_logger::Builder::from_env(
-        Env::default().default_filter_or("info,aws_smithy_http_tower=warn,aws_config=warn"),
-    )
-    .init();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(run())?;
+    runtime.block_on(run_with_tracing())?;
     Ok(())
+}
+
+struct MyEnvFilter(EnvFilter);
+
+impl<S> LayerFilter<S> for MyEnvFilter
+where
+    S: Subscriber,
+{
+    fn enabled(&self, meta: &Metadata<'_>, ctx: &LayerContext<S>) -> bool {
+        self.0.enabled(meta, ctx.to_owned())
+    }
+}
+
+async fn run_with_tracing() -> Result<(), Error> {
+    match std::env::var("OPENTELEMETRY_ENDPOINT") {
+        Ok(otel_endpoint) => {
+            let otel_headers: HashMap<String, String> = serde_json::from_str(
+                &std::env::var("OPENTELEMETRY_HEADERS").unwrap_or_else(|_| "{}".to_owned()),
+            )?;
+            let otlp_exporter = opentelemetry_otlp::new_exporter()
+                .grpcio()
+                .with_endpoint(&otel_endpoint)
+                .with_tls(true)
+                .with_timeout(Duration::from_secs(30))
+                .with_headers(otel_headers);
+            let tracer = opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(otlp_exporter)
+                .with_trace_config(Config::default().with_resource(OtelResource::new([
+                    Key::from_static_str("service.name").string("eip_operator"),
+                ])))
+                .install_batch(opentelemetry::runtime::Tokio)
+                .unwrap();
+            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+            let stdout_layer =
+                fmt::Layer::default().with_filter(MyEnvFilter(EnvFilter::from_default_env()));
+            tracing_subscriber::Registry::default()
+                .with(otel_layer)
+                .with(stdout_layer)
+                .init();
+        }
+        Err(_) => {
+            tracing_subscriber::fmt::init();
+        }
+    };
+    run().await
 }
 
 async fn run() -> Result<(), Error> {
@@ -820,22 +901,20 @@ async fn run() -> Result<(), Error> {
         .run(reconcile_pod, on_error, context.clone())
         .for_each(|reconciliation_result| async move {
             match reconciliation_result {
-                Ok(resource) => info!(
-                    "Pod reconciliation successful. Resource: {}",
-                    resource.0.name
-                ),
-                Err(err) => error!("Pod reconciliation error: {:#?}", err),
+                Ok(resource) => {
+                    event!(Level::INFO, pod_name = %resource.0.name, "Pod reconciliation successful.");
+                }
+                Err(err) => event!(Level::ERROR, err = %err, "Pod reconciliation error."),
             }
         });
     let eip_controller = Controller::new(eip_api, ListParams::default())
         .run(reconcile_eip, on_error, context)
         .for_each(|reconciliation_result| async move {
             match reconciliation_result {
-                Ok(resource) => info!(
-                    "EIP reconciliation successful. Resource: {}",
-                    resource.0.name
-                ),
-                Err(err) => error!("EIP reconciliation error: {:#?}", err),
+                Ok(resource) => {
+                    event!(Level::INFO, eip_name = %resource.0.name, "EIP reconciliation successful.");
+                }
+                Err(err) => event!(Level::ERROR, err = %err, "EIP reconciliation error."),
             }
         });
     join!(pod_controller, eip_controller);

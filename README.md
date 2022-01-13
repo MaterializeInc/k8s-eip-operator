@@ -138,6 +138,16 @@ Add both the `eip.materialize.cloud/manage=true` and `eip.materialize.cloud/auto
 
 Do NOT manually create the Eip Kubernetes object if setting the `eip.materialize.cloud/autocreate_eip=true` label, or the two objects will fight over your pod.
 
+
+## OpenTelemetry Integration
+
+We now have support for sending traces using the OpenTelemetry OTLP format. This is configured through environment variables:
+
+`OPENTELEMETRY_ENDPOINT` is the endpoint to send the logs to.
+
+`OPENTELEMETRY_HEADERS` is a json formatted map of key/value pairs to be included in the GRPC request headers.
+
+
 ## References
 * https://dzone.com/articles/oxidizing-the-kubernetes-operator
 * https://github.com/LogMeIn/k8s-aws-operator
