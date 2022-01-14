@@ -1,5 +1,5 @@
 FROM rust:1.56.1-slim-buster as builder
-RUN apt-get update && apt-get -qy install pkg-config libssl-dev && apt-get clean
+RUN apt-get update && apt-get -qy install pkg-config libssl-dev cmake g++ && apt-get clean
 WORKDIR /workdir
 COPY . .
 RUN cargo build --release

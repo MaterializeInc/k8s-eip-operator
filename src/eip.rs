@@ -9,7 +9,7 @@ use aws_sdk_ec2::output::{
     AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput, ReleaseAddressOutput,
 };
 use aws_sdk_ec2::{Client as Ec2Client, SdkError};
-use log::info;
+use tracing::{info, instrument};
 
 pub(crate) const LEGACY_CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
 
@@ -21,6 +21,7 @@ pub(crate) const NAMESPACE_TAG: &str = "eip.materialize.cloud/namespace";
 pub(crate) const NAME_TAG: &str = "Name";
 
 /// Allocates an AWS Elastic IP, and tags it with the pod uid it will later be associated with.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
     eip_uid: &str,
@@ -68,6 +69,7 @@ pub(crate) async fn allocate_address(
 }
 
 /// Releases (deletes) an AWS Elastic IP.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn release_address(
     ec2_client: &Ec2Client,
     allocation_id: String,
@@ -81,6 +83,7 @@ pub(crate) async fn release_address(
 
 /// Associates an AWS Elastic IP with the Elastic Network Interface.
 /// The private IP of the association will be the pod IP supplied.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn associate_eip_with_pod_eni(
     ec2_client: &Ec2Client,
     eip_id: String,
@@ -98,6 +101,7 @@ pub(crate) async fn associate_eip_with_pod_eni(
 }
 
 /// Describes a single EIP with the specified allocation ID.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn describe_address(
     ec2_client: &Ec2Client,
     allocation_id: String,
@@ -110,6 +114,7 @@ pub(crate) async fn describe_address(
 }
 
 /// Describes any EIPs tagged with the specified pod uid.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn describe_addresses_with_tag_value(
     ec2_client: &Ec2Client,
     key: &str,
@@ -128,6 +133,7 @@ pub(crate) async fn describe_addresses_with_tag_value(
 }
 
 /// Disassociates an Elastic IP from an Elastic Network Interface.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn disassociate_eip(
     ec2_client: &Ec2Client,
     association_id: String,
@@ -140,7 +146,7 @@ pub(crate) async fn disassociate_eip(
     {
         Ok(_) => Ok(()),
         Err(e) if e.to_string().contains("InvalidAssociationID.NotFound") => {
-            info!("Already disassociated: {}", association_id);
+            info!(already_disassociated = true);
             Ok(())
         }
         Err(e) => Err(e),
@@ -148,6 +154,7 @@ pub(crate) async fn disassociate_eip(
 }
 
 /// Disassociates EIP if it is attached to a NIC, then deletes the EIP.
+#[instrument(skip(ec2_client), err)]
 pub(crate) async fn disassociate_and_release_address(
     ec2_client: &Ec2Client,
     address: &Address,
