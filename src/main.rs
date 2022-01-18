@@ -23,6 +23,7 @@ use opentelemetry::sdk::trace::Config;
 use opentelemetry::sdk::Resource as OtelResource;
 use opentelemetry::Key;
 use opentelemetry_otlp::WithExportConfig;
+use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::join;
@@ -434,7 +435,7 @@ async fn apply_pod(
     )
     .await?;
     Ok(ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(300)),
+        requeue_after: Some(Duration::from_secs(thread_rng().gen_range(240..360))),
     })
 }
 
@@ -489,7 +490,7 @@ async fn apply_eip(
     };
     set_eip_status_created(eip_api, eip_name, allocation_id, public_ip).await?;
     Ok(ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(300)),
+        requeue_after: Some(Duration::from_secs(thread_rng().gen_range(240..360))),
     })
 }
 
@@ -711,7 +712,7 @@ fn on_error(
     _context: Context<ContextData>,
 ) -> ReconcilerAction {
     ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(5)),
+        requeue_after: Some(Duration::from_millis(thread_rng().gen_range(4000..8000))),
     }
 }
 
