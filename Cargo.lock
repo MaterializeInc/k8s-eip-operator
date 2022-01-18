@@ -557,6 +557,7 @@ dependencies = [
  "log",
  "opentelemetry",
  "opentelemetry-otlp",
+ "rand",
  "schemars",
  "serde",
  "serde_json",
