@@ -147,6 +147,8 @@ We now have support for sending traces using the OpenTelemetry OTLP format. This
 
 `OPENTELEMETRY_HEADERS` is a json formatted map of key/value pairs to be included in the GRPC request headers.
 
+`OPENTELEMETRY_SAMPLE_RATE` is a float value controlling the trace sample rate. Default is 0.05.
+
 
 ## References
 * https://dzone.com/articles/oxidizing-the-kubernetes-operator

@@ -18,7 +18,7 @@ use kube::{Client, CustomResource, CustomResourceExt, Resource, ResourceExt};
 use kube_runtime::controller::{Context, Controller, ReconcilerAction};
 use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
-use opentelemetry::sdk::trace::Config;
+use opentelemetry::sdk::trace::{Config, Sampler};
 use opentelemetry::sdk::Resource as OtelResource;
 use opentelemetry::Key;
 use opentelemetry_otlp::WithExportConfig;
@@ -830,6 +830,8 @@ async fn run_with_tracing() -> Result<(), Error> {
             let otel_headers: HashMap<String, String> = serde_json::from_str(
                 &std::env::var("OPENTELEMETRY_HEADERS").unwrap_or_else(|_| "{}".to_owned()),
             )?;
+            let otel_sample_rate =
+                &std::env::var("OPENTELEMETRY_SAMPLE_RATE").unwrap_or_else(|_| "0.05".to_owned());
             let otlp_exporter = opentelemetry_otlp::new_exporter()
                 .grpcio()
                 .with_endpoint(&otel_endpoint)
@@ -839,9 +841,15 @@ async fn run_with_tracing() -> Result<(), Error> {
             let tracer = opentelemetry_otlp::new_pipeline()
                 .tracing()
                 .with_exporter(otlp_exporter)
-                .with_trace_config(Config::default().with_resource(OtelResource::new([
-                    Key::from_static_str("service.name").string("eip_operator"),
-                ])))
+                .with_trace_config(
+                    Config::default()
+                        .with_sampler(Sampler::TraceIdRatioBased(
+                            otel_sample_rate.parse().unwrap(),
+                        ))
+                        .with_resource(OtelResource::new([
+                            Key::from_static_str("service.name").string("eip_operator")
+                        ])),
+                )
                 .install_batch(opentelemetry::runtime::Tokio)
                 .unwrap();
             let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
