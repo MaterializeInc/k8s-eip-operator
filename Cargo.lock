@@ -591,7 +591,7 @@ dependencies = [
  "kube",
  "kube-runtime",
  "log",
- "opentelemetry",
+ "opentelemetry 0.17.0",
  "opentelemetry-otlp",
  "rand",
  "schemars",
@@ -1352,6 +1352,25 @@ dependencies = [
  "pin-project",
  "rand",
  "thiserror",
+]
+
+[[package]]
+name = "opentelemetry"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6105e89802af13fdf48c49d7646d3b533a70e536d818aae7e78ba0433d01acb8"
+dependencies = [
+ "async-trait",
+ "crossbeam-channel",
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
+ "js-sys",
+ "lazy_static",
+ "percent-encoding",
+ "pin-project",
+ "rand",
+ "thiserror",
  "tokio",
  "tokio-stream",
 ]
@@ -1366,7 +1385,7 @@ dependencies = [
  "futures",
  "grpcio",
  "http",
- "opentelemetry",
+ "opentelemetry 0.16.0",
  "prost",
  "protobuf",
  "thiserror",
@@ -2155,7 +2174,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ffbf13a0f8b054a4e59df3a173b818e9c6177c02789871f2073977fd0062076"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.16.0",
  "tracing",
  "tracing-core",
  "tracing-log",

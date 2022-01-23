@@ -14,7 +14,7 @@ k8s-openapi = { version = "0.13", default-features = false, features = ["v1_21"]
 kube = { version = "0.66", features = ["derive"] }
 kube-runtime = "0.66"
 log = "0.4"
-opentelemetry = { version = "0.16", features = ["rt-tokio"] }
+opentelemetry = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.9", default-features = false, features = ["grpc-sys", "openssl", "prost", "tokio"] }
 rand = "0.8"
 schemars = "0.8"
