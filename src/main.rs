@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::sync::Arc;
 use std::time::Duration;
 
 use aws_sdk_ec2::error::{
@@ -319,7 +320,7 @@ async fn apply_pod(
     node_api: &Api<Node>,
     eip_api: &Api<Eip>,
     pod_api: &Api<Pod>,
-    pod: Pod,
+    pod: Arc<Pod>,
 ) -> Result<ReconcilerAction, Error> {
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     event!(Level::INFO, pod_name = %pod_name, "Applying pod.");
@@ -442,14 +443,14 @@ async fn apply_pod(
 async fn apply_eip(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
-    eip: Eip,
+    eip: Arc<Eip>,
     cluster_name: &str,
     namespace: &str,
     default_tags: &HashMap<String, String>,
 ) -> Result<ReconcilerAction, Error> {
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
     let eip_name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
-    let pod_name = eip.spec.pod_name;
+    let pod_name = &eip.spec.pod_name;
     event!(Level::INFO, %eip_uid, %eip_name, %pod_name, "Applying EIP.");
     let addresses =
         eip::describe_addresses_with_tag_value(ec2_client, eip::EIP_UID_TAG, eip_uid.to_owned())
@@ -462,7 +463,7 @@ async fn apply_eip(
                 ec2_client,
                 eip_uid,
                 eip_name,
-                &pod_name,
+                pod_name,
                 cluster_name,
                 namespace,
                 default_tags,
@@ -498,7 +499,7 @@ async fn apply_eip(
 async fn cleanup_pod(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
-    pod: Pod,
+    pod: Arc<Pod>,
 ) -> Result<ReconcilerAction, Error> {
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
     event!(Level::INFO, pod_name = %pod_name, "Cleaning up pod.");
@@ -539,7 +540,7 @@ async fn cleanup_pod(
 }
 
 #[instrument(skip(ec2_client, eip), err)]
-async fn cleanup_eip(ec2_client: &Ec2Client, eip: Eip) -> Result<ReconcilerAction, Error> {
+async fn cleanup_eip(ec2_client: &Ec2Client, eip: Arc<Eip>) -> Result<ReconcilerAction, Error> {
     let eip_name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
     event!(Level::INFO, eip_name = %eip_name, eip_uid = %eip_uid, "Cleaning up eip.");
@@ -654,7 +655,7 @@ async fn cleanup_orphan_eips(
 /// the Elastic IP associated with it.
 #[instrument(skip(pod, context), err)]
 async fn reconcile_pod(
-    pod: Pod,
+    pod: Arc<Pod>,
     context: Context<ContextData>,
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
     let namespace = &context.get_ref().namespace;
@@ -677,7 +678,7 @@ async fn reconcile_pod(
 /// cleaning up the Elastic IP associated with it.
 #[instrument(skip(eip, context), err)]
 async fn reconcile_eip(
-    eip: Eip,
+    eip: Arc<Eip>,
     context: Context<ContextData>,
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
     let namespace = &context.get_ref().namespace;
