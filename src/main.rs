@@ -858,15 +858,6 @@ async fn run_with_tracing() -> Result<(), Error> {
             let otel_sample_rate =
                 &std::env::var("OPENTELEMETRY_SAMPLE_RATE").unwrap_or_else(|_| "0.05".to_owned());
 
-            let otel_endpoint = if otel_endpoint.starts_with("https://") {
-                otel_endpoint
-            } else {
-                format!(
-                    "https://{}/",
-                    otel_endpoint.strip_suffix(":443").unwrap_or(&otel_endpoint)
-                )
-            };
-
             // Build endpoint with the correct timeout as exposed here:
             // https://docs.rs/opentelemetry-otlp/latest/opentelemetry_otlp/struct.TonicExporterBuilder.html#method.with_channel
             let endpoint = Endpoint::from_shared(otel_endpoint)?.timeout(Duration::from_secs(
