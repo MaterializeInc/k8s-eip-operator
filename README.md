@@ -87,6 +87,8 @@ This operator manages the following:
     ```
 5. Create a K8S Deployment.
 You must specify the `CLUSTER_NAME` environment variable. `NAMESPACE` and `DEFAULT_TAGS` are optional.
+If you do not set the `NAMESPACE` environment variable, the eip-operator will operate on all namespaces.
+Even in this global mode, the eip and pod must be in the same namespace.
     ```yaml
     apiVersion: apps/v1
     kind: Deployment
