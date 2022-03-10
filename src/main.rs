@@ -49,7 +49,6 @@ const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id"
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
 
 struct ContextData {
-    namespace: String,
     cluster_name: String,
     default_tags: HashMap<String, String>,
     k8s_client: Client,
@@ -59,7 +58,6 @@ struct ContextData {
 impl std::fmt::Debug for ContextData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ContextData")
-            .field("namespace", &self.namespace)
             .field("cluster_name", &self.cluster_name)
             .field("default_tags", &self.default_tags)
             .finish()
@@ -68,14 +66,12 @@ impl std::fmt::Debug for ContextData {
 
 impl ContextData {
     fn new(
-        namespace: String,
         cluster_name: String,
         default_tags: HashMap<String, String>,
         k8s_client: Client,
         ec2_client: Ec2Client,
     ) -> ContextData {
         ContextData {
-            namespace,
             cluster_name,
             default_tags,
             k8s_client,
@@ -566,22 +562,23 @@ async fn cleanup_orphan_eips(
     eip_api: &Api<Eip>,
     pod_api: &Api<Pod>,
     cluster_name: &str,
-    namespace: &str,
+    namespace: Option<&str>,
 ) -> Result<(), Error> {
-    let mut addresses = ec2_client
-        .describe_addresses()
-        .filters(
-            Filter::builder()
-                .name(format!("tag:{}", eip::CLUSTER_NAME_TAG))
-                .values(cluster_name.to_owned())
-                .build(),
-        )
-        .filters(
+    let mut describe_addresses = ec2_client.describe_addresses().filters(
+        Filter::builder()
+            .name(format!("tag:{}", eip::CLUSTER_NAME_TAG))
+            .values(cluster_name.to_owned())
+            .build(),
+    );
+    if let Some(namespace) = namespace {
+        describe_addresses = describe_addresses.filters(
             Filter::builder()
                 .name(format!("tag:{}", eip::NAMESPACE_TAG))
                 .values(namespace.to_owned())
                 .build(),
         )
+    }
+    let mut addresses = describe_addresses
         .send()
         .await?
         .addresses
@@ -658,10 +655,10 @@ async fn reconcile_pod(
     pod: Arc<Pod>,
     context: Context<ContextData>,
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
-    let namespace = &context.get_ref().namespace;
+    let namespace = pod.namespace().unwrap();
     let k8s_client = context.get_ref().k8s_client.clone();
-    let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), namespace);
-    let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), namespace);
+    let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), &namespace);
+    let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), &namespace);
     let node_api: Api<Node> = Api::all(k8s_client.clone());
     let ec2_client = context.get_ref().ec2_client.clone();
     finalizer(&pod_api, POD_FINALIZER_NAME, pod, |event| async {
@@ -681,11 +678,11 @@ async fn reconcile_eip(
     eip: Arc<Eip>,
     context: Context<ContextData>,
 ) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
-    let namespace = &context.get_ref().namespace;
+    let namespace = eip.namespace().unwrap();
     let cluster_name = &context.get_ref().cluster_name;
     let default_tags = &context.get_ref().default_tags;
     let k8s_client = context.get_ref().k8s_client.clone();
-    let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), namespace);
+    let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), &namespace);
     let ec2_client = context.get_ref().ec2_client.clone();
     finalizer(&eip_api, EIP_FINALIZER_NAME, eip, |event| async {
         match event {
@@ -695,7 +692,7 @@ async fn reconcile_eip(
                     &eip_api,
                     eip,
                     cluster_name,
-                    namespace,
+                    &namespace,
                     default_tags,
                 )
                 .await
@@ -877,7 +874,7 @@ async fn run() -> Result<(), Error> {
     let ec2_client = Ec2Client::new(&aws_config);
 
     debug!("Getting namespace from env...");
-    let namespace = std::env::var("NAMESPACE").unwrap_or_else(|_| "default".into());
+    let namespace = std::env::var("NAMESPACE").ok();
 
     debug!("Getting cluster name from env...");
     let cluster_name =
@@ -890,17 +887,29 @@ async fn run() -> Result<(), Error> {
     register_eip_custom_resource(k8s_client.clone()).await?;
 
     debug!("Getting pod api");
-    let pod_api = Api::<Pod>::namespaced(k8s_client.clone(), &namespace);
+    let pod_api = match namespace {
+        Some(ref namespace) => Api::<Pod>::namespaced(k8s_client.clone(), namespace),
+        None => Api::<Pod>::all(k8s_client.clone()),
+    };
 
     debug!("Getting eip api");
-    let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), &namespace);
+    let eip_api = match namespace {
+        Some(ref namespace) => Api::<Eip>::namespaced(k8s_client.clone(), namespace),
+        None => Api::<Eip>::all(k8s_client.clone()),
+    };
 
     debug!("Cleaning up any orphaned EIPs");
-    cleanup_orphan_eips(&ec2_client, &eip_api, &pod_api, &cluster_name, &namespace).await?;
+    cleanup_orphan_eips(
+        &ec2_client,
+        &eip_api,
+        &pod_api,
+        &cluster_name,
+        namespace.as_deref(),
+    )
+    .await?;
 
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(
-        namespace,
         cluster_name,
         default_tags,
         k8s_client.clone(),
