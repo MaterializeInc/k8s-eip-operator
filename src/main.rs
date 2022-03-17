@@ -11,6 +11,9 @@ use aws_sdk_ec2::model::Filter;
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::types::SdkError;
 use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_servicequotas::model::ServiceQuota;
+use aws_sdk_servicequotas::error::GetServiceQuotaError;
+use aws_sdk_servicequotas::{Client as ServiceQuotaClient, SdkError as ServiceQuotaSdkError};
 use futures_util::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::{Node, Pod};
@@ -792,6 +795,12 @@ enum Error {
         #[from]
         source: SdkError<ReleaseAddressError>,
     },
+    #[error("AWS get service quota reported error: {source}")]
+    AwsGetServiceQuota {
+        #[from]
+        source: ServiceQuotaSdkError<GetServiceQuotaError>,
+    },
+
     #[error("serde_json error: {source}")]
     SerdeJson {
         #[from]
@@ -866,6 +875,28 @@ async fn run_with_tracing() -> Result<(), Error> {
     run().await
 }
 
+async fn report_eip_quota_status(
+    ec2_client: &Ec2Client,
+    quota_client: &ServiceQuotaClient,
+) -> Result<(), Error> {
+    let addresses_result = ec2_client
+        .describe_addresses()
+        .send().await?;
+    let allocated = addresses_result.addresses().unwrap_or_default().len();
+    let quota_result = quota_client
+        .get_service_quota()
+        .service_code("ec2")
+        .quota_code("L-0263D0A3")
+        .send()
+        .await?;
+    let quota = quota_result
+        .quota()
+        .and_then(|q: &ServiceQuota| q.value)
+        .unwrap_or(0f64);
+    event!(Level::INFO, allocated = %allocated, quota = %quota, "Checked EIP quota");
+    Ok(())
+}
+
 async fn run() -> Result<(), Error> {
     debug!("Getting k8s_client...");
     let k8s_client = Client::try_default().await?;
@@ -873,6 +904,10 @@ async fn run() -> Result<(), Error> {
     debug!("Getting ec2_client...");
     let aws_config = aws_config::load_from_env().await;
     let ec2_client = Ec2Client::new(&aws_config);
+
+    debug!("Getting quota_client...");
+    let aws_config = aws_config::load_from_env().await;
+    let quota_client = ServiceQuotaClient::new(&aws_config);
 
     debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").ok();
@@ -909,6 +944,7 @@ async fn run() -> Result<(), Error> {
     )
     .await?;
 
+    let ec3_client = ec2_client.clone();
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(
         cluster_name,
@@ -926,8 +962,18 @@ async fn run() -> Result<(), Error> {
                 Err(err) => event!(Level::ERROR, err = %err, "Pod reconciliation error."),
             }
         });
+
     let eip_controller = Controller::new(eip_api, ListParams::default())
         .run(reconcile_eip, on_error, context)
+        .then(|rr| async {
+            if rr.is_ok() {
+                match report_eip_quota_status(&ec3_client, &quota_client).await {
+                    Err(e) => event!(Level::WARN, err = %e, "Could not report on EIP / quota status"),
+                    _ => (),
+                }
+            }
+            rr
+        })
         .for_each(|reconciliation_result| async move {
             match reconciliation_result {
                 Ok(resource) => {
