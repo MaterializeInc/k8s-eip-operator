@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
+// use aws_sdk_ec2::client::fluent_builders::RequestSpotInstances;
 use aws_sdk_ec2::error::{
     AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
     DisassociateAddressError, ReleaseAddressError,
@@ -13,6 +14,7 @@ use aws_sdk_ec2::types::SdkError;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_servicequotas::model::ServiceQuota;
 use aws_sdk_servicequotas::error::GetServiceQuotaError;
+use aws_sdk_servicequotas::model::ServiceQuota;
 use aws_sdk_servicequotas::{Client as ServiceQuotaClient, SdkError as ServiceQuotaSdkError};
 use futures_util::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
@@ -733,11 +735,11 @@ enum Error {
     NoEipResourceWithThatPodName(String),
     #[error("EIP does not have a status.")]
     MissingEipStatus,
-    #[error("EIP does not have a UID in it's metadata.")]
+    #[error("EIP does not have a UID in its metadata.")]
     MissingEipUid,
-    #[error("EIP does not have a name in it's metadata.")]
+    #[error("EIP does not have a name in its metadata.")]
     MissingEipName,
-    #[error("Pod does not have a UID in it's metadata.")]
+    #[error("Pod does not have a UID in its metadata.")]
     MissingPodUid,
     #[error("Pod does not have a name in its metadata.")]
     MissingPodName,
@@ -759,7 +761,7 @@ enum Error {
     MissingReservations,
     #[error("DescribeInstancesResult.reservations[0].instances was None.")]
     MissingInstances,
-    #[error("DescribeInstancesResult.reservations[0].instances[0].network_insterfaces was None.")]
+    #[error("DescribeInstancesResult.reservations[0].instances[0].network_interfaces was None.")]
     MissingNetworkInterfaces,
     #[error("No interface found with IP matching pod.")]
     MissingAddresses,
@@ -879,9 +881,7 @@ async fn report_eip_quota_status(
     ec2_client: &Ec2Client,
     quota_client: &ServiceQuotaClient,
 ) -> Result<(), Error> {
-    let addresses_result = ec2_client
-        .describe_addresses()
-        .send().await?;
+    let addresses_result = ec2_client.describe_addresses().send().await?;
     let allocated = addresses_result.addresses().unwrap_or_default().len();
     let quota_result = quota_client
         .get_service_quota()
@@ -967,9 +967,8 @@ async fn run() -> Result<(), Error> {
         .run(reconcile_eip, on_error, context)
         .then(|rr| async {
             if rr.is_ok() {
-                match report_eip_quota_status(&ec3_client, &quota_client).await {
-                    Err(e) => event!(Level::WARN, err = %e, "Could not report on EIP / quota status"),
-                    _ => (),
+                if let Err(e) = report_eip_quota_status(&ec3_client, &quota_client).await {
+                    event!(Level::WARN, err = %e, "Could not report on EIP / quota status");
                 }
             }
             rr
