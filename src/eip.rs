@@ -8,7 +8,8 @@ use aws_sdk_ec2::model::{Address, DomainType, Filter, ResourceType, Tag, TagSpec
 use aws_sdk_ec2::output::{
     AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput, ReleaseAddressOutput,
 };
-use aws_sdk_ec2::{Client as Ec2Client, SdkError};
+use aws_sdk_ec2::types::SdkError;
+use aws_sdk_ec2::Client as Ec2Client;
 use tracing::{info, instrument};
 
 pub(crate) const LEGACY_CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
