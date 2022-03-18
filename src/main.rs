@@ -54,6 +54,8 @@ const EIP_FINALIZER_NAME: &str = "eip.materialize.cloud/destroy";
 const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
 
+const EIP_QUOTA_CODE: &str = "L-0263D0A3";
+
 struct ContextData {
     cluster_name: String,
     default_tags: HashMap<String, String>,
@@ -886,7 +888,7 @@ async fn report_eip_quota_status(
     let quota_result = quota_client
         .get_service_quota()
         .service_code("ec2")
-        .quota_code("L-0263D0A3")
+        .quota_code(EIP_QUOTA_CODE)
         .send()
         .await?;
     let quota = quota_result
