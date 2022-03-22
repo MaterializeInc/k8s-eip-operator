@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,6 +13,8 @@ use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::types::SdkError;
 use aws_sdk_ec2::Client as Ec2Client;
 use futures_util::StreamExt;
+use hyper::client::HttpConnector;
+use hyper_tls::HttpsConnector;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::{Node, Pod};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
@@ -23,12 +26,13 @@ use kube_runtime::wait::{await_condition, conditions};
 use opentelemetry::sdk::trace::{Config, Sampler};
 use opentelemetry::sdk::Resource as OtelResource;
 use opentelemetry::Key;
-use opentelemetry_otlp::WithExportConfig;
 use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::join;
 use tokio::time::error::Elapsed;
+use tonic::metadata::{MetadataKey, MetadataMap};
+use tonic::transport::Endpoint;
 use tracing::{debug, event, info, instrument, Level, Metadata, Subscriber};
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::fmt;
@@ -802,6 +806,26 @@ enum Error {
         #[from]
         source: Elapsed,
     },
+    #[error("Hyper url error: {source}")]
+    HyperUrl {
+        #[from]
+        source: hyper::http::uri::InvalidUri,
+    },
+    #[error("Tonic transport error: {source}")]
+    TonicTransport {
+        #[from]
+        source: tonic::transport::Error,
+    },
+    #[error("Tonic metadata key error: {source}")]
+    TonicInvalidMetadataKey {
+        #[from]
+        source: tonic::metadata::errors::InvalidMetadataKey,
+    },
+    #[error("Tonic metadata value error: {source}")]
+    TonicInvalidMetadataValue {
+        #[from]
+        source: tonic::metadata::errors::InvalidMetadataValue,
+    },
 }
 
 fn main() -> Result<(), Error> {
@@ -831,12 +855,37 @@ async fn run_with_tracing() -> Result<(), Error> {
             )?;
             let otel_sample_rate =
                 &std::env::var("OPENTELEMETRY_SAMPLE_RATE").unwrap_or_else(|_| "0.05".to_owned());
+
+            // Build endpoint with the correct timeout as exposed here:
+            // https://docs.rs/opentelemetry-otlp/latest/opentelemetry_otlp/struct.TonicExporterBuilder.html#method.with_channel
+            let endpoint = Endpoint::from_shared(otel_endpoint)?.timeout(Duration::from_secs(
+                opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT,
+            ));
+            // TODO(guswynn): investigate if this should be non-lazy
+            let mut http = HttpConnector::new();
+            http.enforce_http(false);
+
+            let connector = HttpsConnector::from((
+                http,
+                tokio_native_tls::TlsConnector::from(
+                    native_tls::TlsConnector::builder()
+                        .request_alpns(&["h2"])
+                        .build()
+                        .unwrap(),
+                ),
+            ));
+            let channel = endpoint.connect_with_connector_lazy(connector)?;
+
+            let mut mmap = MetadataMap::new();
+            for (k, v) in otel_headers {
+                mmap.insert(MetadataKey::from_str(&k)?, v.parse()?);
+            }
+
             let otlp_exporter = opentelemetry_otlp::new_exporter()
-                .grpcio()
-                .with_endpoint(&otel_endpoint)
-                .with_tls(true)
-                .with_timeout(Duration::from_secs(30))
-                .with_headers(otel_headers);
+                .tonic()
+                .with_channel(channel)
+                .with_metadata(mmap);
+
             let tracer = opentelemetry_otlp::new_pipeline()
                 .tracing()
                 .with_exporter(otlp_exporter)
@@ -933,7 +982,8 @@ async fn run() -> Result<(), Error> {
                 Ok(resource) => {
                     event!(Level::INFO, eip_name = %resource.0.name, "EIP reconciliation successful.");
                 }
-                Err(err) => event!(Level::ERROR, err = %err, "EIP reconciliation error."),
+                Err(err) => event!(Level::ERROR, err = %err, "EIP reconciliation error."
+                                   ),
             }
         });
     join!(pod_controller, eip_controller);
