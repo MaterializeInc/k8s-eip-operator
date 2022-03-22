@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: materialize
+  template:
+    metadata:
+      labels:
+        app: materialize
+        eip.materialize.cloud/manage: "true"
+        eip.materialize.cloud/autocreate_eip: "true"
+    spec:
+      containers:
+        - name: materialize
+          image: "materialize/materialized"
+---
+# NOTE: this is just here so we have somewhere to connect
+# to and run arbitrary commands from, since KUTTL isn't
+# quite flexible enough
+apiVersion: v1
+kind: Pod
+metadata:
+  name: commander
+spec:
+  containers:
+  - name: commander
+    image: amazon/aws-cli:2.4.29
+    command: ["/bin/sleep"]
+    args: ["99"]
+  restartPolicy: OnFailure

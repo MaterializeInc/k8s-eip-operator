@@ -1,0 +1,2 @@
+# assert the EIP got cleaned up
+# TODO: install localstack? and assert status against their mock of EIPs?

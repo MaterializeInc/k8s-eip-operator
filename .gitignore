@@ -1,1 +1,3 @@
 /target
+/kind-logs-*
+.shadowenv.d
