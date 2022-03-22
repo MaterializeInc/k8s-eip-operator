@@ -9,7 +9,8 @@ use aws_sdk_ec2::error::{
 };
 use aws_sdk_ec2::model::Filter;
 use aws_sdk_ec2::output::DescribeInstancesOutput;
-use aws_sdk_ec2::{Client as Ec2Client, SdkError};
+use aws_sdk_ec2::types::SdkError;
+use aws_sdk_ec2::Client as Ec2Client;
 use futures_util::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::{Node, Pod};
