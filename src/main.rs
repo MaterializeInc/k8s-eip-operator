@@ -20,7 +20,7 @@ use k8s_openapi::api::core::v1::{Node, Pod};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::api::{Api, DeleteParams, ListParams, Patch, PatchParams};
 use kube::{Client, CustomResource, CustomResourceExt, Resource, ResourceExt};
-use kube_runtime::controller::{Context, Controller, ReconcilerAction};
+use kube_runtime::controller::{Action, Context, Controller};
 use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
 use opentelemetry::sdk::trace::{Config, Sampler};
@@ -322,7 +322,7 @@ async fn apply_pod(
     eip_api: &Api<Eip>,
     pod_api: &Api<Pod>,
     pod: Arc<Pod>,
-) -> Result<ReconcilerAction, Error> {
+) -> Result<Action, Error> {
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     event!(Level::INFO, pod_name = %pod_name, "Applying pod.");
     if should_autocreate_eip(&pod) {
@@ -435,9 +435,9 @@ async fn apply_pod(
         allocation_id.to_owned(),
     )
     .await?;
-    Ok(ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(thread_rng().gen_range(240..360))),
-    })
+    Ok(Action::requeue(Duration::from_secs(
+        thread_rng().gen_range(240..360),
+    )))
 }
 
 #[instrument(skip(ec2_client, eip_api, eip), err)]
@@ -448,7 +448,7 @@ async fn apply_eip(
     cluster_name: &str,
     namespace: &str,
     default_tags: &HashMap<String, String>,
-) -> Result<ReconcilerAction, Error> {
+) -> Result<Action, Error> {
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
     let eip_name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
     let pod_name = &eip.spec.pod_name;
@@ -490,9 +490,9 @@ async fn apply_eip(
         }
     };
     set_eip_status_created(eip_api, eip_name, allocation_id, public_ip).await?;
-    Ok(ReconcilerAction {
-        requeue_after: Some(Duration::from_secs(thread_rng().gen_range(240..360))),
-    })
+    Ok(Action::requeue(Duration::from_secs(
+        thread_rng().gen_range(240..360),
+    )))
 }
 
 /// Deletes AWS Elastic IP associated with a pod being destroyed.
@@ -501,7 +501,7 @@ async fn cleanup_pod(
     ec2_client: &Ec2Client,
     eip_api: &Api<Eip>,
     pod: Arc<Pod>,
-) -> Result<ReconcilerAction, Error> {
+) -> Result<Action, Error> {
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
     event!(Level::INFO, pod_name = %pod_name, "Cleaning up pod.");
     let all_eips = eip_api.list(&ListParams::default()).await?.items;
@@ -535,13 +535,11 @@ async fn cleanup_pod(
         event!(Level::INFO, should_autocreate_eip = true);
         delete_k8s_eip(eip_api, pod_name).await?;
     }
-    Ok(ReconcilerAction {
-        requeue_after: None,
-    })
+    Ok(Action::await_change())
 }
 
 #[instrument(skip(ec2_client, eip), err)]
-async fn cleanup_eip(ec2_client: &Ec2Client, eip: Arc<Eip>) -> Result<ReconcilerAction, Error> {
+async fn cleanup_eip(ec2_client: &Ec2Client, eip: Arc<Eip>) -> Result<Action, Error> {
     let eip_name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
     let eip_uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
     event!(Level::INFO, eip_name = %eip_name, eip_uid = %eip_uid, "Cleaning up eip.");
@@ -554,9 +552,7 @@ async fn cleanup_eip(ec2_client: &Ec2Client, eip: Arc<Eip>) -> Result<Reconciler
             eip::disassociate_and_release_address(ec2_client, &address).await?;
         }
     }
-    Ok(ReconcilerAction {
-        requeue_after: None,
-    })
+    Ok(Action::await_change())
 }
 
 /// Finds all EIPs tagged for this cluster, then compares them to the pod UIDs. If the EIP is not
@@ -659,7 +655,7 @@ async fn cleanup_orphan_eips(
 async fn reconcile_pod(
     pod: Arc<Pod>,
     context: Context<ContextData>,
-) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
+) -> Result<Action, kube_runtime::finalizer::Error<Error>> {
     let namespace = pod.namespace().unwrap();
     let k8s_client = context.get_ref().k8s_client.clone();
     let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), &namespace);
@@ -682,7 +678,7 @@ async fn reconcile_pod(
 async fn reconcile_eip(
     eip: Arc<Eip>,
     context: Context<ContextData>,
-) -> Result<ReconcilerAction, kube_runtime::finalizer::Error<Error>> {
+) -> Result<Action, kube_runtime::finalizer::Error<Error>> {
     let namespace = eip.namespace().unwrap();
     let cluster_name = &context.get_ref().cluster_name;
     let default_tags = &context.get_ref().default_tags;
@@ -712,10 +708,8 @@ async fn reconcile_eip(
 fn on_error(
     _error: &kube_runtime::finalizer::Error<Error>,
     _context: Context<ContextData>,
-) -> ReconcilerAction {
-    ReconcilerAction {
-        requeue_after: Some(Duration::from_millis(thread_rng().gen_range(4000..8000))),
-    }
+) -> Action {
+    Action::requeue(Duration::from_millis(thread_rng().gen_range(4000..8000)))
 }
 
 #[derive(Debug, thiserror::Error)]
