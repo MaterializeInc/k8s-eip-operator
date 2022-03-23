@@ -915,7 +915,6 @@ async fn run() -> Result<(), Error> {
     let ec2_client = Ec2Client::new(&aws_config);
 
     debug!("Getting quota_client...");
-    let aws_config = aws_config::load_from_env().await;
     let quota_client = ServiceQuotaClient::new(&aws_config);
 
     debug!("Getting namespace from env...");
