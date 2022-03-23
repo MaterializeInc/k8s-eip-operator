@@ -12,6 +12,10 @@ use aws_sdk_ec2::model::Filter;
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::types::SdkError;
 use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_servicequotas::error::GetServiceQuotaError;
+use aws_sdk_servicequotas::model::ServiceQuota;
+use aws_sdk_servicequotas::types::SdkError as ServiceQuotaSdkError;
+use aws_sdk_servicequotas::Client as ServiceQuotaClient;
 use futures_util::StreamExt;
 use hyper::client::HttpConnector;
 use hyper_tls::HttpsConnector;
@@ -30,6 +34,7 @@ use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::join;
+use tokio::task;
 use tokio::time::error::Elapsed;
 use tonic::metadata::{MetadataKey, MetadataMap};
 use tonic::transport::Endpoint;
@@ -52,6 +57,14 @@ const EIP_API_VERSION: &str = "materialize.cloud/v1";
 const EIP_FINALIZER_NAME: &str = "eip.materialize.cloud/destroy";
 const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
+
+// See https://us-east-1.console.aws.amazon.com/servicequotas/home/services/ec2/quotas
+// and filter in the UI for EC2 quotas like this, or use the CLI:
+//   aws --profile=mz-cloud-staging-admin service-quotas list-service-quotas --service-code=ec2
+const EIP_QUOTA_CODE: &str = "L-0263D0A3";
+
+// Watch our EIP quota status on a fixed interval
+const EIP_QUOTA_INTERVAL: tokio::time::Duration = Duration::from_secs(60);
 
 struct ContextData {
     cluster_name: String,
@@ -728,11 +741,11 @@ enum Error {
     NoEipResourceWithThatPodName(String),
     #[error("EIP does not have a status.")]
     MissingEipStatus,
-    #[error("EIP does not have a UID in it's metadata.")]
+    #[error("EIP does not have a UID in its metadata.")]
     MissingEipUid,
-    #[error("EIP does not have a name in it's metadata.")]
+    #[error("EIP does not have a name in its metadata.")]
     MissingEipName,
-    #[error("Pod does not have a UID in it's metadata.")]
+    #[error("Pod does not have a UID in its metadata.")]
     MissingPodUid,
     #[error("Pod does not have a name in its metadata.")]
     MissingPodName,
@@ -754,7 +767,7 @@ enum Error {
     MissingReservations,
     #[error("DescribeInstancesResult.reservations[0].instances was None.")]
     MissingInstances,
-    #[error("DescribeInstancesResult.reservations[0].instances[0].network_insterfaces was None.")]
+    #[error("DescribeInstancesResult.reservations[0].instances[0].network_interfaces was None.")]
     MissingNetworkInterfaces,
     #[error("No interface found with IP matching pod.")]
     MissingAddresses,
@@ -790,6 +803,12 @@ enum Error {
         #[from]
         source: SdkError<ReleaseAddressError>,
     },
+    #[error("AWS get service quota reported error: {source}")]
+    AwsGetServiceQuota {
+        #[from]
+        source: ServiceQuotaSdkError<GetServiceQuotaError>,
+    },
+
     #[error("serde_json error: {source}")]
     SerdeJson {
         #[from]
@@ -909,6 +928,27 @@ async fn run_with_tracing() -> Result<(), Error> {
     run().await
 }
 
+#[instrument(skip(ec2_client, quota_client), err)]
+async fn report_eip_quota_status(
+    ec2_client: &Ec2Client,
+    quota_client: &ServiceQuotaClient,
+) -> Result<(), Error> {
+    let addresses_result = ec2_client.describe_addresses().send().await?;
+    let allocated = addresses_result.addresses().unwrap_or_default().len();
+    let quota_result = quota_client
+        .get_service_quota()
+        .service_code("ec2")
+        .quota_code(EIP_QUOTA_CODE)
+        .send()
+        .await?;
+    let quota = quota_result
+        .quota()
+        .and_then(|q: &ServiceQuota| q.value)
+        .unwrap_or(0f64);
+    event!(Level::INFO, eips_allocated = %allocated, eip_quota = %quota, "eip_quota_checked");
+    Ok(())
+}
+
 async fn run() -> Result<(), Error> {
     debug!("Getting k8s_client...");
     let k8s_client = Client::try_default().await?;
@@ -916,6 +956,9 @@ async fn run() -> Result<(), Error> {
     debug!("Getting ec2_client...");
     let aws_config = aws_config::load_from_env().await;
     let ec2_client = Ec2Client::new(&aws_config);
+
+    debug!("Getting quota_client...");
+    let quota_client = ServiceQuotaClient::new(&aws_config);
 
     debug!("Getting namespace from env...");
     let namespace = std::env::var("NAMESPACE").ok();
@@ -952,6 +995,26 @@ async fn run() -> Result<(), Error> {
     )
     .await?;
 
+    info!("Starting quota watcher");
+    // Note: cloning EC2 client so it can be moved into the interval task
+    let ec3_client = ec2_client.clone();
+    // Intentionally capturing this, for ease of debugging, but not doing anything with
+    // it; Tokio should drop the task when it goes out of scope
+    let _quota_watcher = task::spawn(async move {
+        let mut interval = tokio::time::interval(EIP_QUOTA_INTERVAL);
+        // It's better to miss the occasional measurement than to hammer the endpoint
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+            // Note: the Err that might occur here will be handled by tracing
+            // instrumentation, rather than directly here.
+            if let Err(err) = report_eip_quota_status(&ec3_client, &quota_client).await {
+                event!(Level::ERROR, err = %err, "Quota reporting error");
+            }
+        }
+    });
+
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(
         cluster_name,
@@ -969,6 +1032,7 @@ async fn run() -> Result<(), Error> {
                 Err(err) => event!(Level::ERROR, err = %err, "Pod reconciliation error."),
             }
         });
+
     let eip_controller = Controller::new(eip_api, ListParams::default())
         .run(reconcile_eip, on_error, context)
         .for_each(|reconciliation_result| async move {

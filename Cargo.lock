@@ -155,6 +155,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-servicequotas"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e224a8ef4a0438021871332666fd41c4f5274d4e64448f9905fb66937bc4a093"
+dependencies = [
+ "aws-endpoint",
+ "aws-http",
+ "aws-sig-auth",
+ "aws-smithy-async",
+ "aws-smithy-client",
+ "aws-smithy-http",
+ "aws-smithy-http-tower",
+ "aws-smithy-json",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "http",
+ "tokio-stream",
+ "tower",
+]
+
+[[package]]
 name = "aws-sdk-sso"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -589,6 +611,7 @@ version = "0.3.0"
 dependencies = [
  "aws-config",
  "aws-sdk-ec2",
+ "aws-sdk-servicequotas",
  "futures-util",
  "hyper",
  "hyper-proxy",
