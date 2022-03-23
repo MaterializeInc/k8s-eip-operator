@@ -61,7 +61,7 @@ const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/t
 const EIP_QUOTA_CODE: &str = "L-0263D0A3";
 
 // Watch our EIP quota status on a fixed interval
-const EIP_QUOTA_INTERVAL: tokio::time::Duration = Duration::from_millis(60_000);
+const EIP_QUOTA_INTERVAL: tokio::time::Duration = Duration::from_secs(60);
 
 struct ContextData {
     cluster_name: String,
