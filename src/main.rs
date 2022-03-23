@@ -953,6 +953,7 @@ async fn run() -> Result<(), Error> {
     .await?;
 
     info!("Starting quota watcher");
+    // Note: cloning EC2 client so it can be moved into the interval task
     let ec3_client = ec2_client.clone();
     let quota_watcher = task::spawn(async move {
         let mut interval = tokio::time::interval(EIP_QUOTA_INTERVAL);
