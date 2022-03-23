@@ -898,7 +898,7 @@ async fn report_eip_quota_status(
         .quota()
         .and_then(|q: &ServiceQuota| q.value)
         .unwrap_or(0f64);
-    event!(Level::INFO, allocated = %allocated, quota = %quota, "Checked EIP quota");
+    event!(Level::INFO, eips_allocated = %allocated, eip_quota = %quota, "eip_quota_checked");
     Ok(())
 }
 
