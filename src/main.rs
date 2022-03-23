@@ -957,22 +957,23 @@ async fn run() -> Result<(), Error> {
     info!("Starting quota watcher");
     let ec3_client = ec2_client.clone();
     let quota_watcher = task::spawn(async move {
-        let mut interval = time::interval(EIP_QUOTA_INTERVAL);
+        let mut interval = tokio::time::interval(EIP_QUOTA_INTERVAL);
         // It's better to miss the occasional measurement than to hammer the endpoint
-        interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             interval.tick().await;
             // Note: the Err that might occur here will be handled by tracing
             // instrumentation, rather than directly here.
-            match report_eip_quota_status(&ec3_client, &quota_client).await {
-                Err(err) => event!(Level::ERROR, err = %err, "Quota reporting error"),
-                _ => (),
+            if let Err(err) = report_eip_quota_status(&ec3_client, &quota_client).await {
+                event!(Level::ERROR, err = %err, "Quota reporting error");
             }
         }
     });
 
-    quota_watcher.await;
+    if let Err(err) = quota_watcher.await {
+        event!(Level::ERROR, err = %err, "Quota reporting error");
+    }
 
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(
