@@ -33,6 +33,7 @@ use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::join;
+use tokio::task;
 use tokio::time::error::Elapsed;
 use tracing::{debug, event, info, instrument, Level, Metadata, Subscriber};
 use tracing_subscriber::filter::EnvFilter;
@@ -58,6 +59,9 @@ const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/t
 // and filter in the UI for EC2 quotas like this, or use the CLI:
 //   aws --profile=mz-cloud-staging-admin service-quotas list-service-quotas --service-code=ec2
 const EIP_QUOTA_CODE: &str = "L-0263D0A3";
+
+// Watch our EIP quota status on a fixed interval
+const EIP_QUOTA_INTERVAL: tokio::time::Duration = Duration::from_millis(60_000);
 
 struct ContextData {
     cluster_name: String,
@@ -950,7 +954,26 @@ async fn run() -> Result<(), Error> {
     )
     .await?;
 
+    info!("Starting quota watcher");
     let ec3_client = ec2_client.clone();
+    let quota_watcher = task::spawn(async move {
+        let mut interval = time::interval(EIP_QUOTA_INTERVAL);
+        // It's better to miss the occasional measurement than to hammer the endpoint
+        interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+            // Note: the Err that might occur here will be handled by tracing
+            // instrumentation, rather than directly here.
+            match report_eip_quota_status(&ec3_client, &quota_client).await {
+                Err(err) => event!(Level::ERROR, err = %err, "Quota reporting error"),
+                _ => (),
+            }
+        }
+    });
+
+    quota_watcher.await;
+
     info!("Watching for events...");
     let context: Context<ContextData> = Context::new(ContextData::new(
         cluster_name,
@@ -971,14 +994,6 @@ async fn run() -> Result<(), Error> {
 
     let eip_controller = Controller::new(eip_api, ListParams::default())
         .run(reconcile_eip, on_error, context)
-        .then(|rr| async {
-            if rr.is_ok() {
-                // Note: the Err that might occur here will be handled by tracing
-                // instrumentation, rather than directly here.
-                report_eip_quota_status(&ec3_client, &quota_client).await;
-            }
-            rr
-        })
         .for_each(|reconciliation_result| async move {
             match reconciliation_result {
                 Ok(resource) => {
