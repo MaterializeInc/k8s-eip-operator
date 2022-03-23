@@ -54,6 +54,9 @@ const EIP_FINALIZER_NAME: &str = "eip.materialize.cloud/destroy";
 const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
 
+// See https://us-east-1.console.aws.amazon.com/servicequotas/home/services/ec2/quotas
+// and filter in the UI for EC2 quotas like this, or use the CLI:
+//   aws --profile=mz-cloud-staging-admin service-quotas list-service-quotas --service-code=ec2
 const EIP_QUOTA_CODE: &str = "L-0263D0A3";
 
 struct ContextData {
