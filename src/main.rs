@@ -882,6 +882,7 @@ async fn run_with_tracing() -> Result<(), Error> {
     run().await
 }
 
+#[instrument(skip(ec2_client, quota_client), err)]
 async fn report_eip_quota_status(
     ec2_client: &Ec2Client,
     quota_client: &ServiceQuotaClient,
@@ -972,9 +973,9 @@ async fn run() -> Result<(), Error> {
         .run(reconcile_eip, on_error, context)
         .then(|rr| async {
             if rr.is_ok() {
-                if let Err(e) = report_eip_quota_status(&ec3_client, &quota_client).await {
-                    event!(Level::WARN, err = %e, "Could not report on EIP / quota status");
-                }
+                // Note: the Err that might occur here will be handled by tracing
+                // instrumentation, rather than directly here.
+                report_eip_quota_status(&ec3_client, &quota_client).await;
             }
             rr
         })
