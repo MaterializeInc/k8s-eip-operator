@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 
-// use aws_sdk_ec2::client::fluent_builders::RequestSpotInstances;
 use aws_sdk_ec2::error::{
     AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
     DisassociateAddressError, ReleaseAddressError,
