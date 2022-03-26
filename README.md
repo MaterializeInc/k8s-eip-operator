@@ -130,6 +130,7 @@ metadata:
 spec:
   podName: my-pod
 ```
+
 Add the `eip.materialize.cloud/manage=true` label to the pod with name matching the `podName` specified above.
 
 ##### B. If you don't care about getting a new IP if the pod gets recreated:
@@ -140,6 +141,10 @@ Add both the `eip.materialize.cloud/manage=true` and `eip.materialize.cloud/auto
 
 Do NOT manually create the Eip Kubernetes object if setting the `eip.materialize.cloud/autocreate_eip=true` label, or the two objects will fight over your pod.
 
+### Testing
+
+- Install the [KUTTL](https://kuttl.dev/docs/) testing tool
+- Run `./bin/run-tests`
 
 ## OpenTelemetry Integration
 
