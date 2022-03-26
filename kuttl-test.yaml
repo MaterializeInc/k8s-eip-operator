@@ -16,4 +16,4 @@ commands:
 startKIND: true
 kindNodeCache: true
 # kindContainers:
-# - materialize/k8s-eip-operator:necaristest
+# - materialize/k8s-eip-operator:latest
