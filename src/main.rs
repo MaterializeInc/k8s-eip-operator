@@ -952,12 +952,14 @@ async fn report_eip_quota_status(
 fn env_aware_client(cfg: &aws_types::SdkConfig) -> Ec2Client {
     let mut builder = aws_sdk_ec2::config::Builder::from(cfg);
     if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
-        debug!("  Using overridden endpoint url {:?}", endpoint);
+        debug!(" -- Overrode endpoint url: {:?}", endpoint);
         builder = builder.endpoint_resolver(aws_smithy_http::endpoint::Endpoint::immutable(
             endpoint
                 .parse::<http::Uri>()
                 .expect("{endpoint} not parseable as Uri"),
         ));
+    } else {
+        debug!(" -- using STANDARD AWS endpoints")
     }
     Ec2Client::from_conf(builder.build())
 }
