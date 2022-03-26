@@ -7,7 +7,6 @@ env:
   KIND_VERSION: "0.12.0"
   K8S_VERSION: "1.21.1"  # closest hub.docker.com/r/kindest/node version to our EKS deploy
   KUTTL_VERSION: "0.11.1"
-  SHA: ${{ github.sha }}
 
 jobs:
   local-build:
@@ -24,6 +23,7 @@ jobs:
 
     env:
       KUBECONFIG: /tmp/kubeconfig
+      GITHUB_SHA: ${{ github.sha }}
 
     steps:
       # Bash as default shell is needed by the kuttl tests
@@ -36,11 +36,11 @@ jobs:
           sudo mv /bin/sh.bash /bin/sh
       - name: Checkout source
         uses: actions/checkout@v2
-      - name: Install AWS CLI
-        id: install-aws-cli
-        uses: unfor19/install-aws-cli-action@master
-        with:
-          version: 2
+      # - name: Install AWS CLI
+      #   id: install-aws-cli
+      #   uses: unfor19/install-aws-cli-action@master
+      #   with:
+      #     version: 2
       - name: Install kubectl
         run: |
           curl -LO "https://storage.googleapis.com/kubernetes-release/release/v${K8S_VERSION}/bin/linux/amd64/kubectl"
@@ -63,11 +63,5 @@ jobs:
         uses: azure/setup-helm@a517f2ff6560563a369e16ca7c7d136b6164423f
         with:
           version: v3.6.2
-      - name: Push container to kuttl tests
-        run: |
-          echo "\nkindContainers:\n - materialize/k8s-eip-operator:${SHA}\n" >> kuttl-test.yaml
-      - name: Validate test file yaml
-        run: |
-          cat kuttl-test.yaml
       - name: Run tests
-        run: kubectl kuttl test -v=3
+        run: ./bin/run-tests

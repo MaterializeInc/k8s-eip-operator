@@ -1,0 +1,22 @@
+#!/bin/bash
+
+image_exists() {
+    return $(docker image inspect $1 >/dev/null 2>&1 && true || false)
+}
+
+GIT_SHA=${GITHUB_SHA:-$(git rev-parse HEAD)}
+IMAGE_TAG="materialize/k8s-eip-operator:${GIT_SHA}"
+
+if ! image_exists "$IMAGE_TAG"; then
+    docker build -t "$IMAGE_TAG" .
+fi
+
+KUTTL_CFG="./kuttl-test.yaml"
+if [[ "$CI" != "true" ]]; then
+    cp kuttl-test.yaml /tmp/kuttl-test.yaml
+    KUTTL_CFG="/tmp/kuttl-test.yaml"
+fi
+
+echo -e "\nkindContainers:\n- ${IMAGE_TAG}\n" >> $KUTTL_CFG
+
+exec kubectl kuttl test --config=$KUTTL_CFG $@

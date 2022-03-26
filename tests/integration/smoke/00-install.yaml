@@ -44,7 +44,7 @@ spec:
       serviceAccountName: eip-operator
       containers:
         - name: eip-operator
-          image: "materialize/k8s-eip-operator:necaristest"
+          image: "materialize/k8s-eip-operator"
           env:
             - name: CLUSTER_NAME
               value: "test"
