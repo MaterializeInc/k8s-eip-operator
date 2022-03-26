@@ -45,6 +45,7 @@ spec:
       containers:
         - name: eip-operator
           image: "materialize/k8s-eip-operator"
+          imagePullPolicy: Never
           env:
             - name: CLUSTER_NAME
               value: "test"
