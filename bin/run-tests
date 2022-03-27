@@ -5,11 +5,14 @@ image_exists() {
 }
 
 GIT_SHA=${GITHUB_SHA:-$(git rev-parse HEAD)}
-IMAGE="materialize/k8s-eip-operator"
-IMAGE_TAG="$IMAGE:${GIT_SHA}"
+BUILD="k8s-eip-operator"
+IMAGE="materialize/${BUILD}"
+IMAGE_TAG="${IMAGE}:${GIT_SHA}"
 
 if ! image_exists "$IMAGE_TAG"; then
-    docker build -t "$IMAGE_TAG" -t "$IMAGE:latest" .
+    docker build . \
+        -t "$IMAGE_TAG" \
+        -t "$IMAGE:latest"
 fi
 
 KUTTL_CFG="./kuttl-test.yaml"

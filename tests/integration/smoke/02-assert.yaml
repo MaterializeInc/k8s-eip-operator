@@ -1,2 +1,10 @@
-# assert the EIP got cleaned up
-# TODO: install localstack? and assert status against their mock of EIPs?
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+timeout: 90
+# Assert that everything has been cleaned up
+commands:
+- script: >-
+    kubectl exec -n $NAMESPACE commander --
+    env AWS_ACCESS_KEY_ID=a AWS_SECRET_ACCESS_KEY=b AWS_REGION=me-south-1
+    aws --endpoint-url=http://localstack.default:4566 ec2 describe-addresses
+    | jq -e '.Addresses[] | length'

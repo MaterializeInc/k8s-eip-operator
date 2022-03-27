@@ -19,8 +19,8 @@ spec:
           image: "materialize/materialized"
 ---
 # NOTE: this is just here so we have somewhere to connect
-# to and run arbitrary commands from, since KUTTL isn't
-# quite flexible enough
+# to and run arbitrary commands from, since we want to 
+# verify AWS state as well. 
 apiVersion: v1
 kind: Pod
 metadata:
