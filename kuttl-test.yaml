@@ -1,0 +1,15 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestSuite
+testDirs:
+- ./tests/integration/
+commands:
+# Install Localstack to emulate AWS
+- command: helm repo add localstack-repo https://helm.localstack.cloud
+- command: helm delete localstack
+  ignoreFailure: true
+- command: helm install localstack localstack-repo/localstack
+# use Kubernetes-IN-Docker
+startKIND: true
+kindNodeCache: true
+# kindContainers:
+# - materialize/k8s-eip-operator:latest

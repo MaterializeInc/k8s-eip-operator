@@ -1,0 +1,22 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: materialized
+---
+apiVersion: materialize.cloud/v1
+kind: Eip
+---
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+timeout: 90
+commands:
+- script: >-
+    kubectl exec -n $NAMESPACE commander --
+    env AWS_ACCESS_KEY_ID=a AWS_SECRET_ACCESS_KEY=b AWS_REGION=me-south-1
+    aws --endpoint-url=http://localstack.default:4566 ec2 describe-addresses
+    | jq -e '.Addresses[].Tags[] | select(.Key == "eip.materialize.cloud/eip_name").Value'
+- script: >-
+    kubectl -n $NAMESPACE get eips -ojson
+    | jq -e '.items[] | select(.metadata.name | test("materialized-")).status.allocationId'
+---

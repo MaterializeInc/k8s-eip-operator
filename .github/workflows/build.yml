@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
+    - uses: docker/setup-buildx-action@v1
     - uses: docker/login-action@v1
       with:
         username: materializebot
@@ -38,3 +39,5 @@ jobs:
         tags: |
           materialize/k8s-eip-operator:${{ github.sha }}
           materialize/k8s-eip-operator:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

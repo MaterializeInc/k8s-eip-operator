@@ -1,0 +1,22 @@
+apiVersion: kuttl.dev/v1beta1
+kind: TestAssert
+timeout: 90
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eip-operator
+status:
+  readyReplicas: 1
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: eips.materialize.cloud
+status:
+  acceptedNames:
+    kind: Eip
+    plural: eips
+    singular: eip
+  storedVersions:
+  - v1

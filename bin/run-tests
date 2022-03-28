@@ -1,0 +1,20 @@
+#!/bin/bash
+
+GIT_SHA=${GITHUB_SHA:-$(git rev-parse HEAD)}
+BUILD="k8s-eip-operator"
+IMAGE="materialize/${BUILD}"
+IMAGE_TAG="${IMAGE}:${GIT_SHA}"
+
+docker build . \
+    -t "$IMAGE_TAG" \
+    -t "$IMAGE:latest"
+
+KUTTL_CFG="./kuttl-test.yaml"
+if [[ "$CI" != "true" ]]; then
+    cp kuttl-test.yaml /tmp/kuttl-test.yaml
+    KUTTL_CFG="/tmp/kuttl-test.yaml"
+fi
+
+echo -e "\nkindContainers:\n- ${IMAGE_TAG}\n- ${IMAGE}:latest\n" >> $KUTTL_CFG
+
+exec kubectl kuttl test --config=$KUTTL_CFG $@

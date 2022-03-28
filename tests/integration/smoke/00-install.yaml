@@ -1,0 +1,63 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eip-operator
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/status"]
+    verbs: ["get", "watch", "list", "update", "patch"]
+  - verbs: ["get"]
+    apiGroups: [""]
+    resources: ["nodes", "nodes/status"]
+  - verbs: ["create", "update", "patch", "watch", "get", "list"]
+    apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+  - apiGroups: ["materialize.cloud"]
+    resources: ["eips", "eips/status"]
+    verbs: ["create", "update", "patch", "delete", "get", "list", "watch"]
+---
+# This has to be a series of `kubectl` commands so we can use KUTTL's
+# auto-managed namespace.
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+commands:
+- command: kubectl create serviceaccount -n $NAMESPACE eip-operator
+- command: kubectl create clusterrolebinding eip-operator --clusterrole=eip-operator --serviceaccount=$NAMESPACE:eip-operator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eip-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: eip-operator
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: eip-operator
+    spec:
+      serviceAccountName: eip-operator
+      containers:
+        - name: eip-operator
+          image: "materialize/k8s-eip-operator:latest"
+          imagePullPolicy: Never
+          env:
+            - name: CLUSTER_NAME
+              value: "test"
+            - name: DEFAULT_TAGS
+              value: '{"Stack": "mzcloud/test"}'
+            - name: RUST_LOG
+              value: "DEBUG"
+            - name: AWS_ENDPOINT_URL
+              value: http://localstack.default:4566
+            - name: AWS_REGION
+              value: "me-south-1"
+            - name: AWS_ACCESS_KEY_ID
+              value: "dummy"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "dummy"
