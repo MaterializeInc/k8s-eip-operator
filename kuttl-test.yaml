@@ -4,10 +4,6 @@ testDirs:
 - ./tests/integration/
 commands:
 # Install Localstack to emulate AWS
-- command: kubectl create serviceaccount -n kube-system tiller
-  ignoreFailure: true
-- command: kubectl create clusterrolebinding tiller --clusterrole=cluster-admin --serviceaccount=kube-system:tiller
-  ignoreFailure: true
 - command: helm repo add localstack-repo https://helm.localstack.cloud
 - command: helm delete localstack
   ignoreFailure: true
