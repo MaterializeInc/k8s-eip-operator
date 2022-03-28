@@ -30,5 +30,5 @@ spec:
   - name: commander
     image: amazon/aws-cli:2.4.29
     command: ["/bin/sleep"]
-    args: ["99"]
+    args: ["9999"]
   restartPolicy: OnFailure
