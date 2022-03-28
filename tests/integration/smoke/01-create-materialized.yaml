@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: materialize
-          image: "materialize/materialized"
+          image: "materialize/materialized:v0.24.0"
 ---
 # NOTE: this is just here so we have somewhere to connect
 # to and run arbitrary commands from, since we want to 
