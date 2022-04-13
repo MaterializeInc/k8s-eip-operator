@@ -1,3 +1,43 @@
+# Setup for _our_ testing harness within the KinD cluster
+# this has to happen in the second step because KUTTL doesn't
+# allow more than one TestStep in 00-install
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+commands:
+- command: kubectl create serviceaccount -n $NAMESPACE eip-operator
+- command: kubectl create clusterrolebinding eip-operator --clusterrole=eip-operator --serviceaccount=$NAMESPACE:eip-operator
+# Helpers!
+- command: kubectl create configmap scripts-configmap --from-file=$PWD/scripts
+---
+# this is here so we have somewhere to connect to and run arbitrary commands
+# from, since we want to verify "AWS" state from within the cluster
+apiVersion: v1
+kind: Pod
+metadata:
+  name: commander
+spec:
+  containers:
+  - name: commander
+    image: amazon/aws-cli:2.4.29
+    command: ["/bin/sleep"]
+    args: ["9999"]
+    env:
+      # To keep the AWS CLI in the container from complaining
+      - name: AWS_ACCESS_KEY_ID
+        value: a
+      - name: AWS_SECRET_ACCESS_KEY
+        value: b
+      - name: AWS_REGION
+        value: me-south-1
+    volumeMounts:
+    - name: scripts-volume
+      mountPath: /scripts
+  volumes:
+    - name: scripts-volume
+      configMap:
+        name: scripts-configmap
+  restartPolicy: OnFailure
+# END
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -16,14 +56,6 @@ rules:
   - apiGroups: ["materialize.cloud"]
     resources: ["eips", "eips/status"]
     verbs: ["create", "update", "patch", "delete", "get", "list", "watch"]
----
-# This has to be a series of `kubectl` commands so we can use KUTTL's
-# auto-managed namespace.
-apiVersion: kuttl.dev/v1beta1
-kind: TestStep
-commands:
-- command: kubectl create serviceaccount -n $NAMESPACE eip-operator
-- command: kubectl create clusterrolebinding eip-operator --clusterrole=eip-operator --serviceaccount=$NAMESPACE:eip-operator
 ---
 apiVersion: apps/v1
 kind: Deployment
