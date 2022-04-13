@@ -1,3 +1,4 @@
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,19 +17,4 @@ spec:
     spec:
       containers:
         - name: materialize
-          image: "materialize/materialized:v0.24.0"
----
-# NOTE: this is just here so we have somewhere to connect
-# to and run arbitrary commands from, since we want to 
-# verify AWS state as well. 
-apiVersion: v1
-kind: Pod
-metadata:
-  name: commander
-spec:
-  containers:
-  - name: commander
-    image: amazon/aws-cli:2.4.29
-    command: ["/bin/sleep"]
-    args: ["9999"]
-  restartPolicy: OnFailure
+          image: "materialize/materialized:v0.26.0"
