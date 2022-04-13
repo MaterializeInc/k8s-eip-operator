@@ -11,9 +11,8 @@ apiVersion: kuttl.dev/v1beta1
 kind: TestAssert
 timeout: 90
 commands:
-- script: >-
-    kubectl exec -n $NAMESPACE commander -- /scripts/assert-addresses.py
+- command: kubectl exec -n $NAMESPACE commander -- /usr/bin/python /scripts/assert-addresses.py
 - script: >-
     kubectl -n $NAMESPACE get eips -ojson
-    | jq -e '.items[] | select(.metadata.name | test("materialized-")).status.allocationId'
+    | kubectl exec -n $NAMESPACE --stdin commander -- /usr/bin/python /scripts/assert-eips.py
 ---

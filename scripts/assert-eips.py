@@ -8,7 +8,6 @@ from _common import fail_quietly_unless_explicit_success
 
 with fail_quietly_unless_explicit_success() as succeed:
     eips = json.load(sys.stdin)
-    for e in eips:
-        print(e)
+    for e in eips["items"]:
         if e["metadata"]["name"].startswith("materialized-"):
-            succeed("Found EIP: {allocationId}".format(e["status"]))
+            succeed("Found EIP: ", e)

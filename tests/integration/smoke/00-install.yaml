@@ -6,8 +6,7 @@ kind: TestStep
 commands:
 - command: kubectl create serviceaccount -n $NAMESPACE eip-operator
 - command: kubectl create clusterrolebinding eip-operator --clusterrole=eip-operator --serviceaccount=$NAMESPACE:eip-operator
-# Helpers!
-- command: kubectl create configmap scripts-configmap --from-file=$PWD/scripts
+- command: kubectl create configmap -n $NAMESPACE scripts-configmap --from-file=$PWD/scripts
 ---
 # this is here so we have somewhere to connect to and run arbitrary commands
 # from, since we want to verify "AWS" state from within the cluster
