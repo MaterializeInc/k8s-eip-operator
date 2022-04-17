@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 aws-config = "0.9"
-aws-sdk-ec2 = "0.9"
+aws-sdk-ec2 = "0.10"
 aws-sdk-servicequotas = "0.9"
 futures-util = "0.3"
 json-patch = "0.2"
