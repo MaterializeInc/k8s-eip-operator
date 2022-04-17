@@ -12,7 +12,7 @@ aws-sdk-servicequotas = "0.9"
 futures-util = "0.3"
 json-patch = "0.2"
 k8s-openapi = { version = "0.14", default-features = false, features = ["v1_21"] }
-kube = { version = "0.70", features = ["derive"] }
+kube = { version = "0.71", features = ["derive"] }
 kube-runtime = "0.70"
 log = "0.4"
 opentelemetry = { version = "0.17", features = ["rt-tokio", "trace"] }
