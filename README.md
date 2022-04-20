@@ -155,7 +155,7 @@ We now have support for sending traces using the OpenTelemetry OTLP format. This
 
 `OPENTELEMETRY_HEADERS` is a json formatted map of key/value pairs to be included in the GRPC request headers.
 
-`OPENTELEMETRY_TOPLEVEL_FIELDS` is a json formatted map of key/value pairs to be included in all traces.
+`OPENTELEMETRY_TOPLEVEL_FIELDS` is a json formatted map of key/value pairs to be included in all trace spans emitted from the service.
 
 `OPENTELEMETRY_SAMPLE_RATE` is a float value controlling the trace sample rate. Default is 0.05.
 

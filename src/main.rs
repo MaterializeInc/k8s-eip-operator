@@ -29,7 +29,7 @@ use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
 use opentelemetry::sdk::trace::{Config, Sampler};
 use opentelemetry::sdk::Resource as OtelResource;
-use opentelemetry::Key;
+use opentelemetry::KeyValue;
 use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -898,13 +898,13 @@ async fn run_with_tracing() -> Result<(), Error> {
                 mmap.insert(MetadataKey::from_str(&k)?, v.parse()?);
             }
 
-            // Add the attributes that telemetry should have applied
-            let mut avec = vec![Key::from_static_str("service.name").string("eip_operator")];
-
-            for (k, v) in otel_toplevel_fields {
-                avec.push(Key::from(k).string(v));
-            }
-            let otr = OtelResource::new(avec);
+            // Add the attributes that all spans should have applied
+            let otr = OtelResource::new(
+                otel_toplevel_fields
+                    .into_iter()
+                    .map(|(k, v)| KeyValue::new(k, v))
+                    .chain([KeyValue::new("service.name", "eip_operator")]),
+            );
 
             let otlp_exporter = opentelemetry_otlp::new_exporter()
                 .tonic()
