@@ -29,7 +29,7 @@ use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
 use opentelemetry::sdk::trace::{Config, Sampler};
 use opentelemetry::sdk::Resource as OtelResource;
-use opentelemetry::Key;
+use opentelemetry::KeyValue;
 use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -866,6 +866,10 @@ async fn run_with_tracing() -> Result<(), Error> {
             let otel_headers: HashMap<String, String> = serde_json::from_str(
                 &std::env::var("OPENTELEMETRY_HEADERS").unwrap_or_else(|_| "{}".to_owned()),
             )?;
+            // Arbitrary k:v fields to include in all traces, ex: region:us-east-1
+            let otel_toplevel_fields: HashMap<String, String> = serde_json::from_str(
+                &std::env::var("OPENTELEMETRY_TOPLEVEL_FIELDS").unwrap_or_else(|_| "{}".to_owned()),
+            )?;
             let otel_sample_rate =
                 &std::env::var("OPENTELEMETRY_SAMPLE_RATE").unwrap_or_else(|_| "0.05".to_owned());
 
@@ -894,6 +898,14 @@ async fn run_with_tracing() -> Result<(), Error> {
                 mmap.insert(MetadataKey::from_str(&k)?, v.parse()?);
             }
 
+            // Add the attributes that all spans should have applied
+            let otr = OtelResource::new(
+                otel_toplevel_fields
+                    .into_iter()
+                    .map(|(k, v)| KeyValue::new(k, v))
+                    .chain([KeyValue::new("service.name", "eip_operator")]),
+            );
+
             let otlp_exporter = opentelemetry_otlp::new_exporter()
                 .tonic()
                 .with_channel(channel)
@@ -907,9 +919,7 @@ async fn run_with_tracing() -> Result<(), Error> {
                         .with_sampler(Sampler::TraceIdRatioBased(
                             otel_sample_rate.parse().unwrap(),
                         ))
-                        .with_resource(OtelResource::new([
-                            Key::from_static_str("service.name").string("eip_operator")
-                        ])),
+                        .with_resource(otr),
                 )
                 .install_batch(opentelemetry::runtime::Tokio)
                 .unwrap();
