@@ -16,6 +16,7 @@ use aws_sdk_servicequotas::error::GetServiceQuotaError;
 use aws_sdk_servicequotas::model::ServiceQuota;
 use aws_sdk_servicequotas::types::SdkError as ServiceQuotaSdkError;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
+use aws_smithy_http::endpoint::Endpoint as AWSEndpoint;
 use futures_util::StreamExt;
 use hyper::client::HttpConnector;
 use hyper_tls::HttpsConnector;
@@ -959,28 +960,19 @@ async fn report_eip_quota_status(
     Ok(())
 }
 
-fn env_aware_client(cfg: &aws_types::SdkConfig) -> Ec2Client {
-    let mut builder = aws_sdk_ec2::config::Builder::from(cfg);
-    if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
-        debug!(" -- Overrode endpoint url: {:?}", endpoint);
-        builder = builder.endpoint_resolver(aws_smithy_http::endpoint::Endpoint::immutable(
-            endpoint
-                .parse::<http::Uri>()
-                .expect("{endpoint} not parseable as Uri"),
-        ));
-    } else {
-        debug!(" -- using STANDARD AWS endpoints")
-    }
-    Ec2Client::from_conf(builder.build())
-}
-
 async fn run() -> Result<(), Error> {
     debug!("Getting k8s_client...");
     let k8s_client = Client::try_default().await?;
 
     debug!("Getting ec2_client...");
-    let aws_config = aws_config::load_from_env().await;
-    let ec2_client = env_aware_client(&aws_config);
+    let mut config_loader = aws_config::from_env();
+    if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
+        config_loader = config_loader.endpoint_resolver(AWSEndpoint::immutable(
+            endpoint.parse().expect("{endpoint} not valid URI"),
+        ))
+    }
+    let aws_config = config_loader.load().await;
+    let ec2_client = Ec2Client::new(&aws_config);
 
     debug!("Getting quota_client...");
     let quota_client = ServiceQuotaClient::new(&aws_config);
