@@ -37,4 +37,4 @@ tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 # for endpoints
 http = "0.2.7"
 aws-smithy-http = "0.40.2"
-aws-types = "0.10"
+aws-types = "0.11"
