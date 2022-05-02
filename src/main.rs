@@ -40,7 +40,7 @@ use tokio::time::error::Elapsed;
 use tonic::metadata::{MetadataKey, MetadataMap};
 use tonic::transport::Endpoint;
 use tracing::{debug, event, info, instrument, Level, Metadata, Subscriber};
-use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::filter::{EnvFilter, Targets};
 use tracing_subscriber::fmt;
 use tracing_subscriber::layer::{Context as LayerContext, Filter as LayerFilter, SubscriberExt};
 use tracing_subscriber::prelude::*;
@@ -815,6 +815,12 @@ enum Error {
         #[from]
         source: serde_json::Error,
     },
+    #[error("tracing_subscriber error: {source}")]
+    TracingSubscriberParse {
+        #[from]
+        source: tracing_subscriber::filter::ParseError,
+    },
+
     #[error("Tokio Timeout Elapsed: {source}")]
     TokioTimeoutElapsed {
         #[from]
@@ -873,6 +879,9 @@ async fn run_with_tracing() -> Result<(), Error> {
             )?;
             let otel_sample_rate =
                 &std::env::var("OPENTELEMETRY_SAMPLE_RATE").unwrap_or_else(|_| "0.05".to_owned());
+            let otel_targets = std::env::var("OPENTELEMETRY_LEVEL_TARGETS")
+                .unwrap_or_else(|_| "DEBUG".to_owned())
+                .parse::<Targets>()?;
 
             // Build endpoint with the correct timeout as exposed here:
             // https://docs.rs/opentelemetry-otlp/latest/opentelemetry_otlp/struct.TonicExporterBuilder.html#method.with_channel
@@ -924,7 +933,9 @@ async fn run_with_tracing() -> Result<(), Error> {
                 )
                 .install_batch(opentelemetry::runtime::Tokio)
                 .unwrap();
-            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+            let otel_layer = tracing_opentelemetry::layer()
+                .with_tracer(tracer)
+                .with_filter(otel_targets);
             let stdout_layer =
                 fmt::Layer::default().with_filter(MyEnvFilter(EnvFilter::from_default_env()));
             tracing_subscriber::Registry::default()

@@ -157,6 +157,8 @@ We now have support for sending traces using the OpenTelemetry OTLP format. This
 
 `OPENTELEMETRY_TOPLEVEL_FIELDS` is a json formatted map of key/value pairs to be included in all trace spans emitted from the service.
 
+`OPENTELEMETRY_LEVEL_TARGETS` is a [`tracing` crate level filter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html). Defaults to `"DEBUG"`.
+
 `OPENTELEMETRY_SAMPLE_RATE` is a float value controlling the trace sample rate. Default is 0.05.
 
 
