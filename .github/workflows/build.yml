@@ -39,6 +39,6 @@ jobs:
         tags: |
           materialize/k8s-eip-operator:${{ github.sha }}
           materialize/k8s-eip-operator:latest
-        platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
         cache-from: type=gha
         cache-to: type=gha,mode=max
