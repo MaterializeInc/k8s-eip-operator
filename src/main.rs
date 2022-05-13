@@ -901,7 +901,7 @@ async fn run_with_tracing() -> Result<(), Error> {
                         .unwrap(),
                 ),
             ));
-            let channel = endpoint.connect_with_connector_lazy(connector)?;
+            let channel = endpoint.connect_with_connector_lazy(connector);
 
             let mut mmap = MetadataMap::new();
             for (k, v) in otel_headers {
