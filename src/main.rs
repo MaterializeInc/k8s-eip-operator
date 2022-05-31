@@ -25,7 +25,7 @@ use k8s_openapi::api::core::v1::{Node, Pod};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::api::{Api, DeleteParams, ListParams, Patch, PatchParams};
 use kube::{Client, CustomResource, CustomResourceExt, Resource, ResourceExt};
-use kube_runtime::controller::{Action, Context, Controller};
+use kube_runtime::controller::{Action, Controller};
 use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
 use opentelemetry::sdk::trace::{Config, Sampler};
@@ -668,14 +668,14 @@ async fn cleanup_orphan_eips(
 #[instrument(skip(pod, context), err)]
 async fn reconcile_pod(
     pod: Arc<Pod>,
-    context: Context<ContextData>,
+    context: Arc<ContextData>,
 ) -> Result<Action, kube_runtime::finalizer::Error<Error>> {
     let namespace = pod.namespace().unwrap();
-    let k8s_client = context.get_ref().k8s_client.clone();
+    let k8s_client = context.k8s_client.clone();
     let pod_api: Api<Pod> = Api::namespaced(k8s_client.clone(), &namespace);
     let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), &namespace);
     let node_api: Api<Node> = Api::all(k8s_client.clone());
-    let ec2_client = context.get_ref().ec2_client.clone();
+    let ec2_client = context.ec2_client.clone();
     finalizer(&pod_api, POD_FINALIZER_NAME, pod, |event| async {
         match event {
             Event::Apply(pod) => apply_pod(&ec2_client, &node_api, &eip_api, &pod_api, pod).await,
@@ -691,14 +691,14 @@ async fn reconcile_pod(
 #[instrument(skip(eip, context), err)]
 async fn reconcile_eip(
     eip: Arc<Eip>,
-    context: Context<ContextData>,
+    context: Arc<ContextData>,
 ) -> Result<Action, kube_runtime::finalizer::Error<Error>> {
     let namespace = eip.namespace().unwrap();
-    let cluster_name = &context.get_ref().cluster_name;
-    let default_tags = &context.get_ref().default_tags;
-    let k8s_client = context.get_ref().k8s_client.clone();
+    let cluster_name = &context.cluster_name;
+    let default_tags = &context.default_tags;
+    let k8s_client = context.k8s_client.clone();
     let eip_api = Api::<Eip>::namespaced(k8s_client.clone(), &namespace);
-    let ec2_client = context.get_ref().ec2_client.clone();
+    let ec2_client = context.ec2_client.clone();
     finalizer(&eip_api, EIP_FINALIZER_NAME, eip, |event| async {
         match event {
             Event::Apply(eip) => {
@@ -719,10 +719,7 @@ async fn reconcile_eip(
 }
 
 /// Requeues the operation if there is an error.
-fn on_error(
-    _error: &kube_runtime::finalizer::Error<Error>,
-    _context: Context<ContextData>,
-) -> Action {
+fn on_error(_error: &kube_runtime::finalizer::Error<Error>, _context: Arc<ContextData>) -> Action {
     Action::requeue(Duration::from_millis(thread_rng().gen_range(4000..8000)))
 }
 
@@ -1044,7 +1041,7 @@ async fn run() -> Result<(), Error> {
     });
 
     info!("Watching for events...");
-    let context: Context<ContextData> = Context::new(ContextData::new(
+    let context = Arc::new(ContextData::new(
         cluster_name,
         default_tags,
         k8s_client.clone(),
