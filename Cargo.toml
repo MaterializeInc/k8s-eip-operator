@@ -23,7 +23,7 @@ tonic = { version = "0.7.2", features = ["transport"] }
 tokio-native-tls = { version = "0.3.0" }
 native-tls = { version = "0.2.10", features = ["alpn"] }
 hyper-proxy = { version = "0.9.1" }
-hyper = { version = "0.14.17", features = ["http2"] }
+hyper = { version = "0.14.19", features = ["http2"] }
 hyper-tls = { version = "0.5.0" }
 
 rand = "0.8"
