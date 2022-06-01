@@ -1,4 +1,4 @@
-FROM rust:1.60.0-slim-buster as builder
+FROM rust:1.61.0-slim-bullseye as builder
 RUN apt-get update \
     && apt-get -qy install pkg-config libssl-dev cmake g++ \
     && apt-get clean
@@ -6,6 +6,6 @@ WORKDIR /workdir
 COPY . .
 RUN cargo build --release --no-default-features
 
-FROM gcr.io/distroless/cc
+FROM gcr.io/distroless/cc-debian11
 COPY --from=builder /workdir/target/release/eip-operator /
 ENTRYPOINT ["./eip-operator"]
