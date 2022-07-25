@@ -26,6 +26,8 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::layer::{Context as LayerContext, Filter as LayerFilter, SubscriberExt};
 use tracing_subscriber::prelude::*;
 
+pub const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io error: {source}")]

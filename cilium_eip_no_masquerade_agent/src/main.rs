@@ -15,10 +15,9 @@ use rtnetlink::packet::RuleMessage;
 use rtnetlink::{new_connection, Handle, IpVersion, RuleHandle};
 use tracing::{debug, event, info, instrument, Level};
 
-use eip_operator_shared::{run_with_tracing, Error};
+use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 
-const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
-const POD_FINALIZER_NAME: &str = "eip.materialize.cloud/cilium_no_masquerade_rule";
+const POD_FINALIZER_NAME: &str = "eip.materialize.cloud/cilium-no-masquerade-rule";
 
 struct ContextData {
     k8s_client: Client,

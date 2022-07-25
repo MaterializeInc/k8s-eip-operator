@@ -27,7 +27,7 @@ use tokio::join;
 use tokio::task;
 use tracing::{debug, event, info, instrument, Level};
 
-use eip_operator_shared::{run_with_tracing, Error};
+use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 
 mod eip;
 
@@ -35,7 +35,6 @@ const LEGACY_MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
 const LEGACY_POD_FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
 
 const FIELD_MANAGER: &str = "eip.materialize.cloud";
-const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
 const AUTOCREATE_EIP_LABEL: &str = "eip.materialize.cloud/autocreate_eip";
 const POD_FINALIZER_NAME: &str = "eip.materialize.cloud/disassociate";
 const EIP_API_VERSION: &str = "materialize.cloud/v1";
