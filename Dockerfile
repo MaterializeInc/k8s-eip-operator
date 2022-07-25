@@ -8,4 +8,5 @@ RUN cargo build --release --no-default-features
 
 FROM gcr.io/distroless/cc-debian11
 COPY --from=builder /workdir/target/release/eip-operator /
+COPY --from=builder /workdir/target/release/cilium-eip-no-masquerade-agent /
 ENTRYPOINT ["./eip-operator"]

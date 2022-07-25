@@ -1,0 +1,25 @@
+[package]
+name = "eip-operator"
+version = "0.3.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aws-config = "0.15"
+aws-sdk-ec2 = "0.15"
+aws-sdk-servicequotas = "0.15"
+aws-smithy-http = "0.45"
+futures = "0.3"
+json-patch = "0.2"
+k8s-openapi = { version = "0.15", default-features = false, features = ["v1_21"] }
+kube = { version = "0.74", features = ["derive"] }
+kube-runtime = "0.74"
+rand = "0.8"
+schemars = "0.8"
+serde = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tracing = "0.1"
+
+eip-operator-shared = { path = "../eip_operator_shared" }

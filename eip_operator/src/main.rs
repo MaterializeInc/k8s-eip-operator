@@ -1,25 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aws_sdk_ec2::error::{
-    AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
-    DisassociateAddressError, ReleaseAddressError,
-};
+use aws_sdk_ec2::error::DescribeInstancesError;
 use aws_sdk_ec2::model::Filter;
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::types::SdkError;
 use aws_sdk_ec2::Client as Ec2Client;
-use aws_sdk_servicequotas::error::GetServiceQuotaError;
 use aws_sdk_servicequotas::model::ServiceQuota;
-use aws_sdk_servicequotas::types::SdkError as ServiceQuotaSdkError;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
 use aws_smithy_http::endpoint::Endpoint as AWSEndpoint;
-use futures_util::StreamExt;
-use hyper::client::HttpConnector;
-use hyper_tls::HttpsConnector;
+use futures::stream::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::{Node, Pod};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
@@ -28,22 +20,14 @@ use kube::{Client, CustomResource, CustomResourceExt, Resource, ResourceExt};
 use kube_runtime::controller::{Action, Controller};
 use kube_runtime::finalizer::{finalizer, Event};
 use kube_runtime::wait::{await_condition, conditions};
-use opentelemetry::sdk::trace::{Config, Sampler};
-use opentelemetry::sdk::Resource as OtelResource;
-use opentelemetry::KeyValue;
 use rand::{thread_rng, Rng};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::join;
 use tokio::task;
-use tokio::time::error::Elapsed;
-use tonic::metadata::{MetadataKey, MetadataMap};
-use tonic::transport::Endpoint;
-use tracing::{debug, event, info, instrument, Level, Metadata, Subscriber};
-use tracing_subscriber::filter::{EnvFilter, Targets};
-use tracing_subscriber::fmt;
-use tracing_subscriber::layer::{Context as LayerContext, Filter as LayerFilter, SubscriberExt};
-use tracing_subscriber::prelude::*;
+use tracing::{debug, event, info, instrument, Level};
+
+use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 
 mod eip;
 
@@ -51,7 +35,6 @@ const LEGACY_MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
 const LEGACY_POD_FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
 
 const FIELD_MANAGER: &str = "eip.materialize.cloud";
-const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
 const AUTOCREATE_EIP_LABEL: &str = "eip.materialize.cloud/autocreate_eip";
 const POD_FINALIZER_NAME: &str = "eip.materialize.cloud/disassociate";
 const EIP_API_VERSION: &str = "materialize.cloud/v1";
@@ -723,228 +706,12 @@ fn on_error(_error: &kube_runtime::finalizer::Error<Error>, _context: Arc<Contex
     Action::requeue(Duration::from_millis(thread_rng().gen_range(4000..8000)))
 }
 
-#[derive(Debug, thiserror::Error)]
-enum Error {
-    #[error("io error: {source}")]
-    Io {
-        #[from]
-        source: std::io::Error,
-    },
-    #[error("Kubernetes error: {source}")]
-    Kube {
-        #[from]
-        source: kube::Error,
-    },
-    #[error("No EIP found with that podName.")]
-    NoEipResourceWithThatPodName(String),
-    #[error("EIP does not have a status.")]
-    MissingEipStatus,
-    #[error("EIP does not have a UID in its metadata.")]
-    MissingEipUid,
-    #[error("EIP does not have a name in its metadata.")]
-    MissingEipName,
-    #[error("Pod does not have a UID in its metadata.")]
-    MissingPodUid,
-    #[error("Pod does not have a name in its metadata.")]
-    MissingPodName,
-    #[error("Pod does not have an IP address.")]
-    MissingPodIp,
-    #[error("Pod does not have a node name in its spec.")]
-    MissingNodeName,
-    #[error("Node does not have a provider_id in its spec.")]
-    MissingProviderId,
-    #[error("Node provider_id is not in expected format.")]
-    MalformedProviderId,
-    #[error("Multiple elastic IPs are tagged with this pod's UID.")]
-    MultipleEipsTaggedForPod,
-    #[error("allocation_id was None.")]
-    MissingAllocationId,
-    #[error("public_ip was None.")]
-    MissingPublicIp,
-    #[error("DescribeInstancesResult.reservations was None.")]
-    MissingReservations,
-    #[error("DescribeInstancesResult.reservations[0].instances was None.")]
-    MissingInstances,
-    #[error("DescribeInstancesResult.reservations[0].instances[0].network_interfaces was None.")]
-    MissingNetworkInterfaces,
-    #[error("No interface found with IP matching pod.")]
-    MissingAddresses,
-    #[error("DescribeAddressesResult.addresses was None.")]
-    NoInterfaceWithThatIp,
-    #[error("AWS allocate_address reported error: {source}")]
-    AllocateAddress {
-        #[from]
-        source: SdkError<AllocateAddressError>,
-    },
-    #[error("AWS describe_instances reported error: {source}")]
-    AwsDescribeInstances {
-        #[from]
-        source: SdkError<DescribeInstancesError>,
-    },
-    #[error("AWS describe_addresses reported error: {source}")]
-    AwsDescribeAddresses {
-        #[from]
-        source: SdkError<DescribeAddressesError>,
-    },
-    #[error("AWS associate_address reported error: {source}")]
-    AwsAssociateAddress {
-        #[from]
-        source: SdkError<AssociateAddressError>,
-    },
-    #[error("AWS disassociate_address reported error: {source}")]
-    AwsDisassociateAddress {
-        #[from]
-        source: SdkError<DisassociateAddressError>,
-    },
-    #[error("AWS release_address reported error: {source}")]
-    AwsReleaseAddress {
-        #[from]
-        source: SdkError<ReleaseAddressError>,
-    },
-    #[error("AWS get service quota reported error: {source}")]
-    AwsGetServiceQuota {
-        #[from]
-        source: ServiceQuotaSdkError<GetServiceQuotaError>,
-    },
-
-    #[error("serde_json error: {source}")]
-    SerdeJson {
-        #[from]
-        source: serde_json::Error,
-    },
-    #[error("tracing_subscriber error: {source}")]
-    TracingSubscriberParse {
-        #[from]
-        source: tracing_subscriber::filter::ParseError,
-    },
-
-    #[error("Tokio Timeout Elapsed: {source}")]
-    TokioTimeoutElapsed {
-        #[from]
-        source: Elapsed,
-    },
-    #[error("Hyper url error: {source}")]
-    HyperUrl {
-        #[from]
-        source: hyper::http::uri::InvalidUri,
-    },
-    #[error("Tonic transport error: {source}")]
-    TonicTransport {
-        #[from]
-        source: tonic::transport::Error,
-    },
-    #[error("Tonic metadata key error: {source}")]
-    TonicInvalidMetadataKey {
-        #[from]
-        source: tonic::metadata::errors::InvalidMetadataKey,
-    },
-    #[error("Tonic metadata value error: {source}")]
-    TonicInvalidMetadataValue {
-        #[from]
-        source: tonic::metadata::errors::InvalidMetadataValue,
-    },
-}
-
 fn main() -> Result<(), Error> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(run_with_tracing())?;
+    runtime.block_on(run_with_tracing("eip_operator", run))?;
     Ok(())
-}
-
-struct MyEnvFilter(EnvFilter);
-
-impl<S> LayerFilter<S> for MyEnvFilter
-where
-    S: Subscriber,
-{
-    fn enabled(&self, meta: &Metadata<'_>, ctx: &LayerContext<S>) -> bool {
-        self.0.enabled(meta, ctx.to_owned())
-    }
-}
-
-async fn run_with_tracing() -> Result<(), Error> {
-    match std::env::var("OPENTELEMETRY_ENDPOINT") {
-        Ok(otel_endpoint) => {
-            let otel_headers: HashMap<String, String> = serde_json::from_str(
-                &std::env::var("OPENTELEMETRY_HEADERS").unwrap_or_else(|_| "{}".to_owned()),
-            )?;
-            // Arbitrary k:v fields to include in all traces, ex: region:us-east-1
-            let otel_toplevel_fields: HashMap<String, String> = serde_json::from_str(
-                &std::env::var("OPENTELEMETRY_TOPLEVEL_FIELDS").unwrap_or_else(|_| "{}".to_owned()),
-            )?;
-            let otel_sample_rate =
-                &std::env::var("OPENTELEMETRY_SAMPLE_RATE").unwrap_or_else(|_| "0.05".to_owned());
-            let otel_targets = std::env::var("OPENTELEMETRY_LEVEL_TARGETS")
-                .unwrap_or_else(|_| "DEBUG".to_owned())
-                .parse::<Targets>()?;
-
-            // Build endpoint with the correct timeout as exposed here:
-            // https://docs.rs/opentelemetry-otlp/latest/opentelemetry_otlp/struct.TonicExporterBuilder.html#method.with_channel
-            let endpoint = Endpoint::from_shared(otel_endpoint)?.timeout(Duration::from_secs(
-                opentelemetry_otlp::OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT,
-            ));
-            // TODO(guswynn): investigate if this should be non-lazy
-            let mut http = HttpConnector::new();
-            http.enforce_http(false);
-
-            let connector = HttpsConnector::from((
-                http,
-                tokio_native_tls::TlsConnector::from(
-                    native_tls::TlsConnector::builder()
-                        .request_alpns(&["h2"])
-                        .build()
-                        .unwrap(),
-                ),
-            ));
-            let channel = endpoint.connect_with_connector_lazy(connector);
-
-            let mut mmap = MetadataMap::new();
-            for (k, v) in otel_headers {
-                mmap.insert(MetadataKey::from_str(&k)?, v.parse()?);
-            }
-
-            // Add the attributes that all spans should have applied
-            let otr = OtelResource::new(
-                otel_toplevel_fields
-                    .into_iter()
-                    .map(|(k, v)| KeyValue::new(k, v))
-                    .chain([KeyValue::new("service.name", "eip_operator")]),
-            );
-
-            let otlp_exporter = opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_channel(channel)
-                .with_metadata(mmap);
-
-            let tracer = opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_exporter(otlp_exporter)
-                .with_trace_config(
-                    Config::default()
-                        .with_sampler(Sampler::TraceIdRatioBased(
-                            otel_sample_rate.parse().unwrap(),
-                        ))
-                        .with_resource(otr),
-                )
-                .install_batch(opentelemetry::runtime::Tokio)
-                .unwrap();
-            let otel_layer = tracing_opentelemetry::layer()
-                .with_tracer(tracer)
-                .with_filter(otel_targets);
-            let stdout_layer =
-                fmt::Layer::default().with_filter(MyEnvFilter(EnvFilter::from_default_env()));
-            tracing_subscriber::Registry::default()
-                .with(otel_layer)
-                .with(stdout_layer)
-                .init();
-        }
-        Err(_) => {
-            tracing_subscriber::fmt::init();
-        }
-    };
-    run().await
 }
 
 #[instrument(skip(ec2_client, quota_client), err)]
