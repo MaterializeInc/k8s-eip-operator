@@ -1107,7 +1107,7 @@ dependencies = [
 [[package]]
 name = "kube"
 version = "0.74.0"
-source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#667dcd60a6e6f30c7e6313863323d3cc9e072c00"
+source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#c11a64549cb6a798cdaa47cc221739e7689033e7"
 dependencies = [
  "k8s-openapi",
  "kube-client",
@@ -1118,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "kube-client"
 version = "0.74.0"
-source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#667dcd60a6e6f30c7e6313863323d3cc9e072c00"
+source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#c11a64549cb6a798cdaa47cc221739e7689033e7"
 dependencies = [
  "base64",
  "bytes",
@@ -1152,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "kube-core"
 version = "0.74.0"
-source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#667dcd60a6e6f30c7e6313863323d3cc9e072c00"
+source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#c11a64549cb6a798cdaa47cc221739e7689033e7"
 dependencies = [
  "chrono",
  "form_urlencoded",
@@ -1169,7 +1169,7 @@ dependencies = [
 [[package]]
 name = "kube-derive"
 version = "0.74.0"
-source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#667dcd60a6e6f30c7e6313863323d3cc9e072c00"
+source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#c11a64549cb6a798cdaa47cc221739e7689033e7"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -1181,7 +1181,7 @@ dependencies = [
 [[package]]
 name = "kube-runtime"
 version = "0.74.0"
-source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#667dcd60a6e6f30c7e6313863323d3cc9e072c00"
+source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#c11a64549cb6a798cdaa47cc221739e7689033e7"
 dependencies = [
  "ahash",
  "backoff",
