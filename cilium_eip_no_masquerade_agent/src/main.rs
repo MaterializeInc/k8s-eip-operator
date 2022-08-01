@@ -111,21 +111,22 @@ async fn apply_pod(
 async fn cleanup_pod(rule_handle: RuleHandle, pod: Arc<Pod>) -> Result<Action, Error> {
     let pod_name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
     event!(Level::INFO, pod_name = %pod_name, "Cleaning up pod.");
-    let pod_ip: Ipv4Addr = pod
+
+    // Assuming that if it doesn't have an IP during cleanup, that it never had one.
+    if let Some(pod_ip_str) = &pod
         .status
         .as_ref()
-        .ok_or(Error::MissingPodIp)?
-        .pod_ip
-        .as_ref()
-        .ok_or(Error::MissingPodIp)?
-        .parse()?;
-    let rules = rule_handle.get(IpVersion::V4).execute().into_stream();
-    let pod_rules = filter_pod_rules(rules, pod_ip).await?;
-    for rule in pod_rules {
-        if rule.header.dst_len == 0 && rule.header.action == 1 {
-            event!(Level::INFO, pod_name = %pod_name, pod_ip = %pod_ip, rule = ?rule, "Deleting rule.");
-            rule_handle.del(rule).execute().await?;
-            break;
+        .and_then(|status| status.pod_ip.as_ref())
+    {
+        let pod_ip: Ipv4Addr = pod_ip_str.parse()?;
+        let rules = rule_handle.get(IpVersion::V4).execute().into_stream();
+        let pod_rules = filter_pod_rules(rules, pod_ip).await?;
+        for rule in pod_rules {
+            if rule.header.dst_len == 0 && rule.header.action == 1 {
+                event!(Level::INFO, pod_name = %pod_name, pod_ip = %pod_ip, rule = ?rule, "Deleting rule.");
+                rule_handle.del(rule).execute().await?;
+                break;
+            }
         }
     }
     Ok(Action::await_change())
