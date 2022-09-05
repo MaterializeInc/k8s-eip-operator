@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-sdk-ec2 = "0.17"
+aws-sdk-ec2 = "0.18"
 aws-sdk-servicequotas = "0.17"
 aws-smithy-http = "0.47"
 futures = "0.3"
