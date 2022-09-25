@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 aws-config = "0.47"
 aws-sdk-ec2 = "0.17"
-aws-sdk-servicequotas = "0.17"
+aws-sdk-servicequotas = "0.19"
 aws-smithy-http = "0.47"
 futures = "0.3"
 json-patch = "0.2"
