@@ -518,7 +518,7 @@ dependencies = [
  "eip-operator-shared",
  "futures",
  "ipnetwork",
- "k8s-openapi",
+ "k8s-openapi 0.16.0",
  "kube",
  "kube-runtime",
  "rand",
@@ -665,7 +665,7 @@ dependencies = [
  "eip-operator-shared",
  "futures",
  "json-patch",
- "k8s-openapi",
+ "k8s-openapi 0.16.0",
  "kube",
  "kube-runtime",
  "rand",
@@ -1132,11 +1132,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "k8s-openapi"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9455388f4977de4d0934efa9f7d36296295537d774574113a20f6082de03da"
+dependencies = [
+ "base64",
+ "bytes",
+ "chrono",
+ "serde",
+ "serde-value",
+ "serde_json",
+]
+
+[[package]]
 name = "kube"
 version = "0.74.0"
 source = "git+https://github.com/MaterializeInc/kube-rs.git?branch=fix_duplicate_finalizers#28b84d9d618c28902c8dc80757b387a44976ca94"
 dependencies = [
- "k8s-openapi",
+ "k8s-openapi 0.15.0",
  "kube-client",
  "kube-core",
  "kube-derive",
@@ -1159,7 +1173,7 @@ dependencies = [
  "hyper-openssl",
  "hyper-timeout",
  "jsonpath_lib",
- "k8s-openapi",
+ "k8s-openapi 0.15.0",
  "kube-core",
  "openssl",
  "pem",
@@ -1185,7 +1199,7 @@ dependencies = [
  "form_urlencoded",
  "http",
  "json-patch",
- "k8s-openapi",
+ "k8s-openapi 0.15.0",
  "once_cell",
  "schemars",
  "serde",
@@ -1215,7 +1229,7 @@ dependencies = [
  "derivative",
  "futures",
  "json-patch",
- "k8s-openapi",
+ "k8s-openapi 0.15.0",
  "kube-client",
  "parking_lot",
  "pin-project",
