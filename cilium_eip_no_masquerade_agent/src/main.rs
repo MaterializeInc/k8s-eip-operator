@@ -153,7 +153,11 @@ async fn reconcile_pod(
 }
 
 /// Requeues the operation if there is an error.
-fn on_error(_error: &kube_runtime::finalizer::Error<Error>, _context: Arc<ContextData>) -> Action {
+fn on_error(
+    _pod: Arc<Pod>,
+    _error: &kube_runtime::finalizer::Error<Error>,
+    _context: Arc<ContextData>,
+) -> Action {
     Action::requeue(Duration::from_millis(thread_rng().gen_range(4000..8000)))
 }
 
