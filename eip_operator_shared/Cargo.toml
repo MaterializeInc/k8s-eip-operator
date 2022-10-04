@@ -13,6 +13,7 @@ futures = "0.3"
 hyper = { version = "0.14.20", features = ["http2"] }
 hyper-tls = { version = "0.5.0" }
 kube = { version = "0.75", features = ["derive"] }
+kube-runtime = { version = "0.75" }
 native-tls = { version = "0.2.10", features = ["alpn"] }
 opentelemetry = { version = "0.17", features = ["rt-tokio", "trace"] }
 opentelemetry-otlp = { version = "0.10" }

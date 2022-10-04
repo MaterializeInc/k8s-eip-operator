@@ -136,7 +136,7 @@ async fn register_eip_custom_resource(k8s_client: Client) -> Result<(), Error> {
         "eips.materialize.cloud",
         conditions::is_crd_established(),
     );
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), establish).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), establish).await??;
     Ok(())
 }
 
