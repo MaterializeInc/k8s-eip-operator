@@ -4,7 +4,7 @@ kind: Deployment
 metadata:
   name: materialized
 ---
-apiVersion: materialize.cloud/v1
+apiVersion: materialize.cloud/v2
 kind: Eip
 ---
 apiVersion: kuttl.dev/v1beta1

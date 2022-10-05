@@ -1,4 +1,4 @@
 ---
-apiVersion: materialize.cloud/v1
+apiVersion: materialize.cloud/v2
 kind: Eip
 ---

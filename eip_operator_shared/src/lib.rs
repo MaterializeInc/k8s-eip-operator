@@ -47,6 +47,8 @@ pub enum Error {
     },
     #[error("No EIP found with that podName.")]
     NoEipResourceWithThatPodName(String),
+    #[error("No EIP found with that node selector.")]
+    NoEipResourceWithThatNodeSelector,
     #[error("EIP does not have a status.")]
     MissingEipStatus,
     #[error("EIP does not have a UID in its metadata.")]
@@ -59,8 +61,12 @@ pub enum Error {
     MissingPodName,
     #[error("Pod does not have an IP address.")]
     MissingPodIp,
+    #[error("Node does not have an IP address.")]
+    MissingNodeIp,
     #[error("Pod does not have a node name in its spec.")]
     MissingNodeName,
+    #[error("Node does not have labels.")]
+    MissingNodeLabels,
     #[error("Node does not have a provider_id in its spec.")]
     MissingProviderId,
     #[error("Node provider_id is not in expected format.")]

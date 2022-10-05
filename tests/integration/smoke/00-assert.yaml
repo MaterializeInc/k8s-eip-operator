@@ -19,4 +19,4 @@ status:
     plural: eips
     singular: eip
   storedVersions:
-  - v1
+  - v2
