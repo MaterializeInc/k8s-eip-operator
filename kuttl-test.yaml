@@ -13,3 +13,4 @@ startKIND: true
 kindNodeCache: true
 # kindContainers:
 # - materialize/k8s-eip-operator:latest
+timeout: 300
