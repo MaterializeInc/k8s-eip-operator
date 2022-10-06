@@ -40,6 +40,11 @@ pub enum Error {
         #[from]
         source: kube::Error,
     },
+    #[error("Kubernetes error: {source}")]
+    KubeRuntimeWaitError {
+        #[from]
+        source: kube_runtime::wait::Error,
+    },
     #[error("No EIP found with that podName.")]
     NoEipResourceWithThatPodName(String),
     #[error("EIP does not have a status.")]
