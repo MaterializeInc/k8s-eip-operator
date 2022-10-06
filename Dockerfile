@@ -12,11 +12,13 @@ RUN apt-get update \
     && apt-get clean
 WORKDIR /workdir
 COPY --from=planner /workdir/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+ARG CARGO_RELEASE=--release
+ARG CARGO_FEATURES=--no-default-features
+RUN cargo chef cook $CARGO_RELEASE $CARGO_FEATURES --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --no-default-features
+RUN cargo build $CARGO_RELEASE $CARGO_FEATURES
 
 FROM gcr.io/distroless/cc-debian11
-COPY --from=builder /workdir/target/release/eip-operator /
-COPY --from=builder /workdir/target/release/cilium-eip-no-masquerade-agent /
+COPY --from=builder /workdir/target/*/eip-operator /
+COPY --from=builder /workdir/target/*/cilium-eip-no-masquerade-agent /
 ENTRYPOINT ["./eip-operator"]
