@@ -15,6 +15,7 @@ use tracing::{info, instrument};
 pub(crate) const LEGACY_CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
 
 pub(crate) const POD_NAME_TAG: &str = "eip.materialize.cloud/pod_name";
+pub(crate) const NODE_SELECTOR_TAG: &str = "eip.materialize.cloud/node_selector";
 pub(crate) const EIP_UID_TAG: &str = "eip.materialize.cloud/eip_uid";
 pub(crate) const EIP_NAME_TAG: &str = "eip.materialize.cloud/eip_name";
 pub(crate) const CLUSTER_NAME_TAG: &str = "eip.materialize.cloud/cluster_name";
@@ -27,7 +28,7 @@ pub(crate) async fn allocate_address(
     ec2_client: &Ec2Client,
     eip_uid: &str,
     eip_name: &str,
-    pod_name: &str,
+    eip_selector: &crate::v2::EipSelector,
     cluster_name: &str,
     namespace: &str,
     default_tags: &HashMap<String, String>,
@@ -45,7 +46,19 @@ pub(crate) async fn allocate_address(
             .value(cluster_name)
             .build(),
     );
-    tags.push(Tag::builder().key(POD_NAME_TAG).value(pod_name).build());
+    match eip_selector {
+        crate::v2::EipSelector::Pod { pod_name } => {
+            tags.push(Tag::builder().key(POD_NAME_TAG).value(pod_name).build());
+        }
+        crate::v2::EipSelector::Node { selector } => {
+            tags.push(
+                Tag::builder()
+                    .key(NODE_SELECTOR_TAG)
+                    .value(&serde_json::to_string(selector).unwrap())
+                    .build(),
+            );
+        }
+    }
 
     tags.push(
         Tag::builder()
@@ -85,18 +98,18 @@ pub(crate) async fn release_address(
 /// Associates an AWS Elastic IP with the Elastic Network Interface.
 /// The private IP of the association will be the pod IP supplied.
 #[instrument(skip(ec2_client), err)]
-pub(crate) async fn associate_eip_with_pod_eni(
+pub(crate) async fn associate_eip(
     ec2_client: &Ec2Client,
     eip_id: String,
     eni_id: String,
-    pod_ip: String,
+    private_ip: String,
 ) -> Result<AssociateAddressOutput, SdkError<AssociateAddressError>> {
     ec2_client
         .associate_address()
         .allocation_id(eip_id)
         .allow_reassociation(true)
         .network_interface_id(eni_id)
-        .private_ip_address(pod_ip)
+        .private_ip_address(private_ip)
         .send()
         .await
 }
