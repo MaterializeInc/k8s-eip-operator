@@ -516,6 +516,7 @@ dependencies = [
 name = "cilium-eip-no-masquerade-agent"
 version = "0.3.0"
 dependencies = [
+ "async-trait",
  "eip-operator-shared",
  "futures",
  "ipnetwork",
@@ -659,6 +660,7 @@ checksum = "4f94fa09c2aeea5b8839e414b7b841bf429fd25b9c522116ac97ee87856d88b2"
 name = "eip-operator"
 version = "0.3.0"
 dependencies = [
+ "async-trait",
  "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-servicequotas",
@@ -681,6 +683,7 @@ dependencies = [
 name = "eip-operator-shared"
 version = "0.3.0"
 dependencies = [
+ "async-trait",
  "aws-sdk-ec2",
  "aws-sdk-servicequotas",
  "aws-smithy-http",
@@ -692,6 +695,7 @@ dependencies = [
  "native-tls",
  "opentelemetry",
  "opentelemetry-otlp",
+ "rand",
  "rtnetlink",
  "serde",
  "serde_json",
