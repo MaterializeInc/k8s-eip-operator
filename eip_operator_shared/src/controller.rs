@@ -66,12 +66,12 @@ pub trait Context {
         .await
     }
 
-    fn on_success(&self, _res: &Self::Resource) -> Action {
+    fn on_success(&self, _resource: &Self::Resource) -> Action {
         Action::requeue(Duration::from_secs(thread_rng().gen_range(2400..3600)))
     }
     fn on_error(
         self: Arc<Self>,
-        _res: Arc<Self::Resource>,
+        _resource: Arc<Self::Resource>,
         _err: &kube_runtime::finalizer::Error<Self::Error>,
     ) -> Action {
         Action::requeue(Duration::from_millis(thread_rng().gen_range(4000..8000)))
@@ -91,7 +91,7 @@ where
     client: kube::Client,
     make_api: Box<dyn Fn(&Ctx::Resource) -> Api<Ctx::Resource> + Sync + Send + 'static>,
     controller: kube_runtime::controller::Controller<Ctx::Resource>,
-    ctx: Ctx,
+    context: Ctx,
 }
 
 impl<Ctx: Context> Controller<Ctx>
@@ -104,7 +104,7 @@ where
     <Ctx::Resource as Resource>::DynamicType:
         Eq + Clone + std::hash::Hash + std::default::Default + std::fmt::Debug + std::marker::Unpin,
 {
-    pub fn namespaced(namespace: &str, client: Client, lp: ListParams, ctx: Ctx) -> Self
+    pub fn namespaced(namespace: &str, client: Client, lp: ListParams, context: Ctx) -> Self
     where
         Ctx::Resource: Resource<Scope = NamespaceResourceScope>,
     {
@@ -122,11 +122,11 @@ where
             client,
             make_api,
             controller,
-            ctx,
+            context,
         }
     }
 
-    pub fn namespaced_all(client: Client, lp: ListParams, ctx: Ctx) -> Self
+    pub fn namespaced_all(client: Client, lp: ListParams, context: Ctx) -> Self
     where
         Ctx::Resource: Resource<Scope = NamespaceResourceScope>,
     {
@@ -144,11 +144,11 @@ where
             client,
             make_api,
             controller,
-            ctx,
+            context,
         }
     }
 
-    pub fn cluster(client: Client, lp: ListParams, ctx: Ctx) -> Self
+    pub fn cluster(client: Client, lp: ListParams, context: Ctx) -> Self
     where
         Ctx::Resource: Resource<Scope = ClusterResourceScope>,
     {
@@ -164,7 +164,7 @@ where
             client,
             make_api,
             controller,
-            ctx,
+            context,
         }
     }
 
@@ -173,17 +173,19 @@ where
             client,
             make_api,
             controller,
-            ctx,
+            context,
         } = self;
         controller
             .run(
-                |resource, ctx| ctx.reconcile(client.clone(), make_api(&resource), resource),
-                |resource, err, ctx| ctx.on_error(resource, err),
-                Arc::new(ctx),
+                |resource, context| {
+                    context.reconcile(client.clone(), make_api(&resource), resource)
+                },
+                |resource, err, context| context.on_error(resource, err),
+                Arc::new(context),
             )
             .for_each(|reconciliation_result| async move {
-                let dt = Default::default();
-                let kind = Ctx::Resource::kind(&dt).to_owned();
+                let dynamic_type = Default::default();
+                let kind = Ctx::Resource::kind(&dynamic_type).to_owned();
                 match reconciliation_result {
                     Ok(resource) => {
                         event!(

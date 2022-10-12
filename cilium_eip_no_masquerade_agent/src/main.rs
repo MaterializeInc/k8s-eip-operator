@@ -166,12 +166,12 @@ async fn run() -> Result<(), Error> {
 
     info!("Watching for events...");
     let context = Context::new(handle, vpc_cidr);
-    let lp = ListParams::default()
+    let list_params = ListParams::default()
         .labels(MANAGE_EIP_LABEL)
         .fields(&format!("spec.nodeName={}", node_name));
     let controller = match namespace {
-        Some(ref namespace) => Controller::namespaced(namespace, k8s_client, lp, context),
-        None => Controller::namespaced_all(k8s_client, lp, context),
+        Some(ref namespace) => Controller::namespaced(namespace, k8s_client, list_params, context),
+        None => Controller::namespaced_all(k8s_client, list_params, context),
     };
     controller.run().await;
 

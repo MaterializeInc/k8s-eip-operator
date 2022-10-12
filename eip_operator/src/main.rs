@@ -123,27 +123,29 @@ async fn run() -> Result<(), Error> {
 
     tasks.push({
         let context = controller::pod::Context::new(ec2_client.clone());
-        let lp = ListParams::default().labels(MANAGE_EIP_LABEL);
+        let list_params = ListParams::default().labels(MANAGE_EIP_LABEL);
         let pod_controller = match &namespace {
-            Some(namespace) => Controller::namespaced(namespace, k8s_client.clone(), lp, context),
-            None => Controller::namespaced_all(k8s_client.clone(), lp, context),
+            Some(namespace) => {
+                Controller::namespaced(namespace, k8s_client.clone(), list_params, context)
+            }
+            None => Controller::namespaced_all(k8s_client.clone(), list_params, context),
         };
         task::spawn(pod_controller.run())
     });
 
     tasks.push({
         let context = controller::node::Context::new(ec2_client.clone(), namespace.clone());
-        let lp = ListParams::default().labels(MANAGE_EIP_LABEL);
-        let node_controller = Controller::cluster(k8s_client.clone(), lp, context);
+        let list_params = ListParams::default().labels(MANAGE_EIP_LABEL);
+        let node_controller = Controller::cluster(k8s_client.clone(), list_params, context);
         task::spawn(node_controller.run())
     });
 
     tasks.push({
         let context = controller::eip::Context::new(ec2_client, cluster_name, default_tags);
-        let lp = ListParams::default();
+        let list_params = ListParams::default();
         let eip_controller = match &namespace {
-            Some(namespace) => Controller::namespaced(namespace, k8s_client, lp, context),
-            None => Controller::namespaced_all(k8s_client, lp, context),
+            Some(namespace) => Controller::namespaced(namespace, k8s_client, list_params, context),
+            None => Controller::namespaced_all(k8s_client, list_params, context),
         };
         task::spawn(eip_controller.run())
     });
