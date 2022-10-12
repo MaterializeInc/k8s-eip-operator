@@ -28,6 +28,8 @@ use tracing_subscriber::prelude::*;
 
 pub const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
 
+pub mod controller;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("io error: {source}")]
