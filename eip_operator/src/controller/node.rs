@@ -24,8 +24,8 @@ impl Context {
 
 #[async_trait::async_trait]
 impl eip_operator_shared::controller::Context for Context {
-    type Res = Node;
-    type Err = Error;
+    type Resource = Node;
+    type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/disassociate_node";
 
@@ -33,9 +33,9 @@ impl eip_operator_shared::controller::Context for Context {
     async fn apply(
         &self,
         client: Client,
-        _api: Api<Self::Res>,
-        node: &Self::Res,
-    ) -> Result<(), Self::Err> {
+        _api: Api<Self::Resource>,
+        node: &Self::Resource,
+    ) -> Result<(), Self::Error> {
         let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
         event!(Level::INFO, name = %name, "Applying node.");
 
@@ -82,9 +82,9 @@ impl eip_operator_shared::controller::Context for Context {
     async fn cleanup(
         &self,
         client: Client,
-        _api: Api<Self::Res>,
-        node: &Self::Res,
-    ) -> Result<(), Self::Err> {
+        _api: Api<Self::Resource>,
+        node: &Self::Resource,
+    ) -> Result<(), Self::Error> {
         let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
         event!(Level::INFO, name = %name, "Cleaning up node.");
 

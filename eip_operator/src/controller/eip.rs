@@ -30,8 +30,8 @@ impl Context {
 
 #[async_trait::async_trait]
 impl eip_operator_shared::controller::Context for Context {
-    type Res = Eip;
-    type Err = Error;
+    type Resource = Eip;
+    type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/destroy";
 
@@ -39,9 +39,9 @@ impl eip_operator_shared::controller::Context for Context {
     async fn apply(
         &self,
         _client: Client,
-        api: Api<Self::Res>,
-        eip: &Self::Res,
-    ) -> Result<(), Self::Err> {
+        api: Api<Self::Resource>,
+        eip: &Self::Resource,
+    ) -> Result<(), Self::Error> {
         let uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
         let name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
         let selector = &eip.spec.selector;
@@ -93,9 +93,9 @@ impl eip_operator_shared::controller::Context for Context {
     async fn cleanup(
         &self,
         _client: Client,
-        _api: Api<Self::Res>,
-        eip: &Self::Res,
-    ) -> Result<(), Self::Err> {
+        _api: Api<Self::Resource>,
+        eip: &Self::Resource,
+    ) -> Result<(), Self::Error> {
         let name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
         let uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
         event!(Level::INFO, name = %name, uid = %uid, "Cleaning up eip.");

@@ -12,37 +12,37 @@ use tracing::{event, Level};
 
 #[async_trait::async_trait]
 pub trait Context {
-    type Res: Resource;
-    type Err: std::error::Error;
+    type Resource: Resource;
+    type Error: std::error::Error;
 
     const FINALIZER_NAME: &'static str;
 
     async fn apply(
         &self,
         client: Client,
-        api: Api<Self::Res>,
-        res: &Self::Res,
-    ) -> Result<(), Self::Err>;
+        api: Api<Self::Resource>,
+        res: &Self::Resource,
+    ) -> Result<(), Self::Error>;
     async fn cleanup(
         &self,
         client: Client,
-        api: Api<Self::Res>,
-        res: &Self::Res,
-    ) -> Result<(), Self::Err>;
+        api: Api<Self::Resource>,
+        res: &Self::Resource,
+    ) -> Result<(), Self::Error>;
 
     async fn reconcile(
         self: Arc<Self>,
         client: Client,
-        api: Api<Self::Res>,
-        res: Arc<Self::Res>,
-    ) -> Result<Action, kube_runtime::finalizer::Error<Self::Err>>
+        api: Api<Self::Resource>,
+        res: Arc<Self::Resource>,
+    ) -> Result<Action, kube_runtime::finalizer::Error<Self::Error>>
     where
         Self: Send + Sync + 'static,
-        Self::Err: Send + Sync + 'static,
-        Self::Res: Send + Sync + 'static,
-        Self::Res: Clone + std::fmt::Debug + serde::Serialize,
-        for<'de> Self::Res: serde::Deserialize<'de>,
-        <Self::Res as Resource>::DynamicType: Eq
+        Self::Error: Send + Sync + 'static,
+        Self::Resource: Send + Sync + 'static,
+        Self::Resource: Clone + std::fmt::Debug + serde::Serialize,
+        for<'de> Self::Resource: serde::Deserialize<'de>,
+        <Self::Resource as Resource>::DynamicType: Eq
             + Clone
             + std::hash::Hash
             + std::default::Default
@@ -64,13 +64,13 @@ pub trait Context {
         .await
     }
 
-    fn on_success(&self, _res: &Self::Res) -> Action {
+    fn on_success(&self, _res: &Self::Resource) -> Action {
         Action::requeue(Duration::from_secs(thread_rng().gen_range(2400..3600)))
     }
     fn on_error(
         self: Arc<Self>,
-        _res: Arc<Self::Res>,
-        _err: &kube_runtime::finalizer::Error<Self::Err>,
+        _res: Arc<Self::Resource>,
+        _err: &kube_runtime::finalizer::Error<Self::Error>,
     ) -> Action {
         Action::requeue(Duration::from_millis(thread_rng().gen_range(4000..8000)))
     }
@@ -79,41 +79,41 @@ pub trait Context {
 pub struct Controller<Ctx: Context>
 where
     Ctx: Send + Sync + 'static,
-    Ctx::Err: Send + Sync + 'static,
-    Ctx::Res: Send + Sync + 'static,
-    Ctx::Res: Clone + std::fmt::Debug + serde::Serialize,
-    for<'de> Ctx::Res: serde::Deserialize<'de>,
-    <Ctx::Res as Resource>::DynamicType:
+    Ctx::Error: Send + Sync + 'static,
+    Ctx::Resource: Send + Sync + 'static,
+    Ctx::Resource: Clone + std::fmt::Debug + serde::Serialize,
+    for<'de> Ctx::Resource: serde::Deserialize<'de>,
+    <Ctx::Resource as Resource>::DynamicType:
         Eq + Clone + std::hash::Hash + std::default::Default + std::fmt::Debug + std::marker::Unpin,
 {
     client: kube::Client,
-    make_api: Box<dyn Fn(&Ctx::Res) -> Api<Ctx::Res> + Sync + Send + 'static>,
-    controller: kube_runtime::controller::Controller<Ctx::Res>,
+    make_api: Box<dyn Fn(&Ctx::Resource) -> Api<Ctx::Resource> + Sync + Send + 'static>,
+    controller: kube_runtime::controller::Controller<Ctx::Resource>,
     ctx: Ctx,
 }
 
 impl<Ctx: Context> Controller<Ctx>
 where
     Ctx: Send + Sync + 'static,
-    Ctx::Err: Send + Sync + 'static,
-    Ctx::Res: Send + Sync + 'static,
-    Ctx::Res: Clone + std::fmt::Debug + serde::Serialize,
-    for<'de> Ctx::Res: serde::Deserialize<'de>,
-    <Ctx::Res as Resource>::DynamicType:
+    Ctx::Error: Send + Sync + 'static,
+    Ctx::Resource: Send + Sync + 'static,
+    Ctx::Resource: Clone + std::fmt::Debug + serde::Serialize,
+    for<'de> Ctx::Resource: serde::Deserialize<'de>,
+    <Ctx::Resource as Resource>::DynamicType:
         Eq + Clone + std::hash::Hash + std::default::Default + std::fmt::Debug + std::marker::Unpin,
 {
     pub fn namespaced(namespace: &str, client: Client, lp: ListParams, ctx: Ctx) -> Self
     where
-        Ctx::Res: Resource<Scope = NamespaceResourceScope>,
+        Ctx::Resource: Resource<Scope = NamespaceResourceScope>,
     {
         let make_api = {
             let client = client.clone();
-            Box::new(move |res: &Ctx::Res| {
-                Api::<Ctx::Res>::namespaced(client.clone(), &res.namespace().unwrap())
+            Box::new(move |res: &Ctx::Resource| {
+                Api::<Ctx::Resource>::namespaced(client.clone(), &res.namespace().unwrap())
             })
         };
         let controller = kube_runtime::controller::Controller::new(
-            Api::<Ctx::Res>::namespaced(client.clone(), namespace),
+            Api::<Ctx::Resource>::namespaced(client.clone(), namespace),
             lp,
         );
         Self {
@@ -126,16 +126,18 @@ where
 
     pub fn namespaced_all(client: Client, lp: ListParams, ctx: Ctx) -> Self
     where
-        Ctx::Res: Resource<Scope = NamespaceResourceScope>,
+        Ctx::Resource: Resource<Scope = NamespaceResourceScope>,
     {
         let make_api = {
             let client = client.clone();
-            Box::new(move |res: &Ctx::Res| {
-                Api::<Ctx::Res>::namespaced(client.clone(), &res.namespace().unwrap())
+            Box::new(move |res: &Ctx::Resource| {
+                Api::<Ctx::Resource>::namespaced(client.clone(), &res.namespace().unwrap())
             })
         };
-        let controller =
-            kube_runtime::controller::Controller::new(Api::<Ctx::Res>::all(client.clone()), lp);
+        let controller = kube_runtime::controller::Controller::new(
+            Api::<Ctx::Resource>::all(client.clone()),
+            lp,
+        );
         Self {
             client,
             make_api,
@@ -146,14 +148,16 @@ where
 
     pub fn cluster(client: Client, lp: ListParams, ctx: Ctx) -> Self
     where
-        Ctx::Res: Resource<Scope = ClusterResourceScope>,
+        Ctx::Resource: Resource<Scope = ClusterResourceScope>,
     {
         let make_api = {
             let client = client.clone();
-            Box::new(move |_: &Ctx::Res| Api::<Ctx::Res>::all(client.clone()))
+            Box::new(move |_: &Ctx::Resource| Api::<Ctx::Resource>::all(client.clone()))
         };
-        let controller =
-            kube_runtime::controller::Controller::new(Api::<Ctx::Res>::all(client.clone()), lp);
+        let controller = kube_runtime::controller::Controller::new(
+            Api::<Ctx::Resource>::all(client.clone()),
+            lp,
+        );
         Self {
             client,
             make_api,
@@ -177,7 +181,7 @@ where
             )
             .for_each(|reconciliation_result| async move {
                 let dt = Default::default();
-                let kind = Ctx::Res::kind(&dt).to_owned();
+                let kind = Ctx::Resource::kind(&dt).to_owned();
                 match reconciliation_result {
                     Ok(resource) => {
                         event!(

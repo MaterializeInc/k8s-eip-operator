@@ -21,8 +21,8 @@ impl Context {
 
 #[async_trait::async_trait]
 impl eip_operator_shared::controller::Context for Context {
-    type Res = Pod;
-    type Err = Error;
+    type Resource = Pod;
+    type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/disassociate";
 
@@ -30,9 +30,9 @@ impl eip_operator_shared::controller::Context for Context {
     async fn apply(
         &self,
         client: Client,
-        api: Api<Self::Res>,
-        pod: &Self::Res,
-    ) -> Result<(), Self::Err> {
+        api: Api<Self::Resource>,
+        pod: &Self::Resource,
+    ) -> Result<(), Self::Error> {
         let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
         event!(Level::INFO, name = %name, "Applying pod.");
 
@@ -93,9 +93,9 @@ impl eip_operator_shared::controller::Context for Context {
     async fn cleanup(
         &self,
         client: Client,
-        _api: Api<Self::Res>,
-        pod: &Self::Res,
-    ) -> Result<(), Self::Err> {
+        _api: Api<Self::Resource>,
+        pod: &Self::Resource,
+    ) -> Result<(), Self::Error> {
         let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
         event!(Level::INFO, name = %name, "Cleaning up pod.");
 
