@@ -13,7 +13,6 @@ const CRD_NAME: &str = "eips.materialize.cloud";
 
 use v2::{Eip, EipSelector, EipSpec};
 
-#[allow(dead_code)]
 pub mod v1 {
     use kube::api::Api;
     use kube::{Client, CustomResource};
@@ -53,10 +52,6 @@ pub mod v1 {
     pub(crate) type LaxEip = kube::api::Object<LaxEipSpec, kube::api::NotUsed>;
 
     impl Eip {
-        pub fn version() -> String {
-            <Self as kube::Resource>::version(&()).into_owned()
-        }
-
         pub(crate) fn lax_api(k8s_client: Client, namespace: Option<&str>) -> Api<LaxEip> {
             Api::<LaxEip>::namespaced_with(
                 k8s_client,
