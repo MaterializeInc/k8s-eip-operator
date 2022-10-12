@@ -21,20 +21,20 @@ pub trait Context {
         &self,
         client: Client,
         api: Api<Self::Resource>,
-        res: &Self::Resource,
+        resource: &Self::Resource,
     ) -> Result<(), Self::Error>;
     async fn cleanup(
         &self,
         client: Client,
         api: Api<Self::Resource>,
-        res: &Self::Resource,
+        resource: &Self::Resource,
     ) -> Result<(), Self::Error>;
 
     async fn reconcile(
         self: Arc<Self>,
         client: Client,
         api: Api<Self::Resource>,
-        res: Arc<Self::Resource>,
+        resource: Arc<Self::Resource>,
     ) -> Result<Action, kube_runtime::finalizer::Error<Self::Error>>
     where
         Self: Send + Sync + 'static,
@@ -52,13 +52,15 @@ pub trait Context {
         finalizer(
             &api,
             Self::FINALIZER_NAME,
-            Arc::clone(&res),
+            Arc::clone(&resource),
             |event| async {
                 match event {
-                    Event::Apply(res) => self.apply(client, api.clone(), &res).await?,
-                    Event::Cleanup(res) => self.cleanup(client, api.clone(), &res).await?,
+                    Event::Apply(resource) => self.apply(client, api.clone(), &resource).await?,
+                    Event::Cleanup(resource) => {
+                        self.cleanup(client, api.clone(), &resource).await?
+                    }
                 }
-                Ok(self.on_success(&res))
+                Ok(self.on_success(&resource))
             },
         )
         .await
@@ -108,8 +110,8 @@ where
     {
         let make_api = {
             let client = client.clone();
-            Box::new(move |res: &Ctx::Resource| {
-                Api::<Ctx::Resource>::namespaced(client.clone(), &res.namespace().unwrap())
+            Box::new(move |resource: &Ctx::Resource| {
+                Api::<Ctx::Resource>::namespaced(client.clone(), &resource.namespace().unwrap())
             })
         };
         let controller = kube_runtime::controller::Controller::new(
@@ -130,8 +132,8 @@ where
     {
         let make_api = {
             let client = client.clone();
-            Box::new(move |res: &Ctx::Resource| {
-                Api::<Ctx::Resource>::namespaced(client.clone(), &res.namespace().unwrap())
+            Box::new(move |resource: &Ctx::Resource| {
+                Api::<Ctx::Resource>::namespaced(client.clone(), &resource.namespace().unwrap())
             })
         };
         let controller = kube_runtime::controller::Controller::new(
@@ -175,8 +177,8 @@ where
         } = self;
         controller
             .run(
-                |res, ctx| ctx.reconcile(client.clone(), make_api(&res), res),
-                |res, err, ctx| ctx.on_error(res, err),
+                |resource, ctx| ctx.reconcile(client.clone(), make_api(&resource), resource),
+                |resource, err, ctx| ctx.on_error(resource, err),
                 Arc::new(ctx),
             )
             .for_each(|reconciliation_result| async move {
