@@ -28,5 +28,5 @@ tracing-opentelemetry = "0.17"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 
 rtnetlink = { git = "https://github.com/MaterializeInc/netlink.git", branch = "priority_support" }
-async-trait = "0.1.57"
+async-trait = "0.1.58"
 rand = "0.8.5"
