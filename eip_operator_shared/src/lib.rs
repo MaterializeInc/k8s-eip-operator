@@ -259,15 +259,19 @@ where
             let otel_layer = tracing_opentelemetry::layer()
                 .with_tracer(tracer)
                 .with_filter(otel_targets);
-            let stdout_layer =
-                fmt::Layer::default().with_filter(MyEnvFilter(EnvFilter::from_default_env()));
+            let stdout_layer = fmt::layer()
+                .json()
+                .with_filter(MyEnvFilter(EnvFilter::from_default_env()));
             tracing_subscriber::Registry::default()
                 .with(otel_layer)
                 .with(stdout_layer)
                 .init();
         }
         Err(_) => {
-            tracing_subscriber::fmt::init();
+            tracing_subscriber::fmt()
+                .with_env_filter(EnvFilter::from_default_env())
+                .json()
+                .init();
         }
     };
     f().await
