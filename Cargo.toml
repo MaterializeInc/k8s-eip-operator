@@ -5,6 +5,10 @@ members = [
     "eip_operator_shared",
 ]
 
+[workspace.package]
+edition = "2021"
+rust-version = "1.66.0"
+
 # Use this section only to change the source of dependencies that might
 # also appear as transitive dependencies of other external dependencies in
 # the dependency graph. For everything else set the `git` sourcce
