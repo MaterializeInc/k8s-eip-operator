@@ -1,12 +1,12 @@
 # k8s-eip-operator
 
-Manage external connections to Kubernetes pods using AWS Elastic IPs (EIPs).
+Manage external connections to Kubernetes pods or nodes using AWS Elastic IPs (EIPs).
 
 This operator manages the following:
 * Creation of an EIP Custom Resource Definition in K8S.
 * Creation/destruction of EIP allocations in AWS.
     * These AWS EIPs will be tagged with the K8S EIP uid they will be assigned to (`eip.materialize.cloud/eip_uid`) for later identification.
-* Association/disassociation of the EIP to the Elastic Network Interface (ENI) on the private IP of the pod.
+* Association/disassociation of the EIP to the Elastic Network Interface (ENI) on the private IP of the pod or node.
 * Annotation of `external-dns.alpha.kubernetes.io/target` on the pod, so that the `external-dns` operator knows to use the IP of the EIP instead of the external IP of the primary ENI on the host.
 
 ## Prerequisites
@@ -124,12 +124,14 @@ Even in this global mode, the eip and pod must be in the same namespace.
 
 Instantiate an Eip Kubernetes object, specifying the `podName` in the spec.
 ```yaml
-apiVersion: "materialize.cloud/v1"
+apiVersion: "materialize.cloud/v2"
 kind: Eip
 metadata:
   name: my-new-eip
 spec:
-  podName: my-pod
+  selector:
+    pod:
+      podName: my-pod
 ```
 
 Add the `eip.materialize.cloud/manage=true` label to the pod with name matching the `podName` specified above.
@@ -141,6 +143,24 @@ No need to manually create the Eip in this case, the operator can do it for you.
 Add both the `eip.materialize.cloud/manage=true` and `eip.materialize.cloud/autocreate_eip=true` labels to your pod.
 
 Do NOT manually create the Eip Kubernetes object if setting the `eip.materialize.cloud/autocreate_eip=true` label, or the two objects will fight over your pod.
+
+##### C. If you want to attach an EIP to attach to a node directly instead of a pod, specify a node selector instead in the Eip Kubernetes resource:
+```yaml
+apiVersion: "materialize.cloud/v2"
+kind: Eip
+metadata:
+  name: my-new-eip
+spec:
+  selector:
+    node:
+      selector:
+        some-label: some-value
+        some-other-label: some-other-value
+```
+
+The node selector should contain a set of labels which should match a single node - if multiple nodes are matched, the EIP will be attached to one of them arbitrarily.
+
+Add the `eip.materialize.cloud/manage=true` label to the node whose labels match the labels in the selector.
 
 ## Cilium Support
 
