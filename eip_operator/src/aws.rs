@@ -55,7 +55,7 @@ pub(crate) async fn allocate_address(
             tags.push(
                 Tag::builder()
                     .key(NODE_SELECTOR_TAG)
-                    .value(&serde_json::to_string(selector).unwrap())
+                    .value(serde_json::to_string(selector).unwrap())
                     .build(),
             );
         }

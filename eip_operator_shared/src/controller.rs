@@ -78,6 +78,9 @@ pub trait Context {
     }
 }
 
+type MakeApi<Ctx> = Box<
+    dyn Fn(&<Ctx as Context>::Resource) -> Api<<Ctx as Context>::Resource> + Sync + Send + 'static,
+>;
 pub struct Controller<Ctx: Context>
 where
     Ctx: Send + Sync + 'static,
@@ -89,7 +92,7 @@ where
         Eq + Clone + std::hash::Hash + std::default::Default + std::fmt::Debug + std::marker::Unpin,
 {
     client: kube::Client,
-    make_api: Box<dyn Fn(&Ctx::Resource) -> Api<Ctx::Resource> + Sync + Send + 'static>,
+    make_api: MakeApi<Ctx>,
     controller: kube_runtime::controller::Controller<Ctx::Resource>,
     context: Ctx,
 }
@@ -185,7 +188,7 @@ where
             )
             .for_each(|reconciliation_result| async move {
                 let dynamic_type = Default::default();
-                let kind = Ctx::Resource::kind(&dynamic_type).to_owned();
+                let kind = Ctx::Resource::kind(&dynamic_type);
                 match reconciliation_result {
                     Ok(resource) => {
                         event!(
