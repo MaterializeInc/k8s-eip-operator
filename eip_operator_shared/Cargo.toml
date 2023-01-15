@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 aws-sdk-ec2 = "0.21"
 aws-sdk-servicequotas = "0.21"
-aws-smithy-http = "0.51"
+aws-smithy-http = "0.53"
 futures = "0.3"
 hyper = { version = "0.14.20", features = ["http2"] }
 hyper-tls = { version = "0.5.0" }
