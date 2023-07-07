@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use aws_sdk_ec2::model::Filter;
+use aws_sdk_ec2::types::Filter;
 use aws_sdk_ec2::Client as Ec2Client;
-use aws_sdk_servicequotas::model::ServiceQuota;
+use aws_sdk_servicequotas::types::ServiceQuota;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
-use aws_smithy_http::endpoint::Endpoint as AWSEndpoint;
 use futures::future::join_all;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::Pod;
@@ -56,9 +55,7 @@ async fn run() -> Result<(), Error> {
     debug!("Getting ec2_client...");
     let mut config_loader = aws_config::from_env();
     if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
-        config_loader = config_loader.endpoint_resolver(AWSEndpoint::immutable(
-            endpoint.parse().expect("{endpoint} not valid URI"),
-        ))
+        config_loader = config_loader.endpoint_url(endpoint);
     }
     let aws_config = config_loader.load().await;
     let ec2_client = Ec2Client::new(&aws_config);

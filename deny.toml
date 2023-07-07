@@ -1,0 +1,52 @@
+targets = [
+    { triple = "aarch64-apple-darwin" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "x86_64-unknown-linux-gnu" },
+]
+
+[advisories]
+vulnerability = "deny"
+
+[bans]
+multiple-versions = "deny"
+skip = [
+    { name = "syn", version = "1.0.109" },
+    { name = "syn", version = "2.0.23" },
+]
+
+# Use `tracing` instead.
+[[bans.deny]]
+name = "env_logger"
+
+# We prefer the system's native TLS or OpenSSL to Rustls, since they are more
+# mature and more widely used.
+[[bans.deny]]
+name = "rustls"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-DFS-2016",
+]
+copyleft = "deny"
+
+[[licenses.clarify]]
+name = "ring"
+expression = "ISC"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 }
+]
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+# Do not allow non-MaterializeInc Git repositories here! Git repositories must
+# be owned by the MaterializeInc organization so that maintainership is shared
+# amongst Materialize employees and so that historical versions of Materialize
+# remain buildable even if upstream Git repositories disappear. If you don't
+# have permissions to create a fork in the MaterializeInc organization, ask in
+# #eng-infra on Slack.
+allow-org = { github = ["MaterializeInc"] }

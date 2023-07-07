@@ -1,15 +1,13 @@
 use std::collections::HashMap;
 
-use aws_sdk_ec2::error::{
-    AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
-    DisassociateAddressError, ReleaseAddressError,
-};
-use aws_sdk_ec2::model::{Address, DomainType, Filter, ResourceType, Tag, TagSpecification};
-use aws_sdk_ec2::output::{
-    AllocateAddressOutput, AssociateAddressOutput, DescribeAddressesOutput,
-    DescribeInstancesOutput, ReleaseAddressOutput,
-};
-use aws_sdk_ec2::types::SdkError;
+use aws_sdk_ec2::error::SdkError;
+use aws_sdk_ec2::operation::allocate_address::{AllocateAddressError, AllocateAddressOutput};
+use aws_sdk_ec2::operation::associate_address::{AssociateAddressError, AssociateAddressOutput};
+use aws_sdk_ec2::operation::describe_addresses::{DescribeAddressesError, DescribeAddressesOutput};
+use aws_sdk_ec2::operation::describe_instances::{DescribeInstancesError, DescribeInstancesOutput};
+use aws_sdk_ec2::operation::disassociate_address::DisassociateAddressError;
+use aws_sdk_ec2::operation::release_address::{ReleaseAddressError, ReleaseAddressOutput};
+use aws_sdk_ec2::types::{Address, DomainType, Filter, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::Client as Ec2Client;
 use tracing::{debug, info, instrument};
 
