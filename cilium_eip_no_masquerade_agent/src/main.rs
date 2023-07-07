@@ -2,15 +2,16 @@ use std::net::Ipv4Addr;
 
 use futures::{future, StreamExt, TryStream, TryStreamExt};
 use ipnetwork::Ipv4Network;
+use k8s_controller::Controller;
 use k8s_openapi::api::core::v1::Pod;
-use kube::api::{Api, ListParams};
+use kube::api::ListParams;
 use kube::Client;
+use kube_runtime::controller::Action;
 use rtnetlink::packet::rule::Nla;
 use rtnetlink::packet::RuleMessage;
 use rtnetlink::{new_connection, Handle, IpVersion};
 use tracing::{debug, event, info, instrument, Level};
 
-use eip_operator_shared::controller::Controller;
 use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 
 struct Context {
@@ -25,21 +26,18 @@ impl Context {
 }
 
 #[async_trait::async_trait]
-impl eip_operator_shared::controller::Context for Context {
+impl k8s_controller::Context for Context {
     type Resource = Pod;
     type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/cilium-no-masquerade-rule";
 
-    #[instrument(skip(self, _client, _api, pod), err)]
+    #[instrument(skip(self, _client, pod), err)]
     async fn apply(
         &self,
         _client: Client,
-        _api: Api<Self::Resource>,
         pod: &Self::Resource,
-    ) -> Result<(), Self::Error> {
-        let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
-        event!(Level::INFO, name = %name, "Applying pod.");
+    ) -> Result<Option<Action>, Self::Error> {
         let pod_ip: Ipv4Addr = pod
             .status
             .as_ref()
@@ -83,18 +81,16 @@ impl eip_operator_shared::controller::Context for Context {
                 .await?;
         }
 
-        Ok(())
+        Ok(None)
     }
 
-    #[instrument(skip(self, _client, _api, pod), err)]
+    #[instrument(skip(self, _client, pod), err)]
     async fn cleanup(
         &self,
         _client: Client,
-        _api: Api<Self::Resource>,
         pod: &Self::Resource,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<Option<Action>, Self::Error> {
         let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
-        event!(Level::INFO, name = %name, "Cleaning up pod.");
 
         // Assuming that if it doesn't have an IP during cleanup, that it never had one.
         if let Some(pod_ip_str) = &pod
@@ -114,7 +110,7 @@ impl eip_operator_shared::controller::Context for Context {
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -170,8 +166,8 @@ async fn run() -> Result<(), Error> {
         .labels(MANAGE_EIP_LABEL)
         .fields(&format!("spec.nodeName={}", node_name));
     let controller = match namespace {
-        Some(ref namespace) => Controller::namespaced(namespace, k8s_client, list_params, context),
-        None => Controller::namespaced_all(k8s_client, list_params, context),
+        Some(ref namespace) => Controller::namespaced(k8s_client, context, namespace, list_params),
+        None => Controller::namespaced_all(k8s_client, context, list_params),
     };
     controller.run().await;
 

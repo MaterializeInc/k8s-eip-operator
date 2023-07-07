@@ -1,6 +1,7 @@
 use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::{Client, ResourceExt};
+use kube_runtime::controller::Action;
 use serde::Deserialize;
 use tracing::{event, instrument, Level};
 
@@ -20,23 +21,22 @@ impl Context {
 }
 
 #[async_trait::async_trait]
-impl eip_operator_shared::controller::Context for Context {
+impl k8s_controller::Context for Context {
     type Resource = Pod;
     type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/disassociate";
 
-    #[instrument(skip(self, client, api, pod), err)]
+    #[instrument(skip(self, client, pod), err)]
     async fn apply(
         &self,
         client: Client,
-        api: Api<Self::Resource>,
         pod: &Self::Resource,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<Option<Action>, Self::Error> {
         let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
-        event!(Level::INFO, name = %name, "Applying pod.");
 
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
+        let pod_api = Api::<Pod>::namespaced(client.clone(), &pod.namespace().unwrap());
         let node_api = Api::<Node>::all(client.clone());
 
         if should_autocreate_eip(pod) {
@@ -85,19 +85,17 @@ impl eip_operator_shared::controller::Context for Context {
             crate::aws::associate_eip(&self.ec2_client, allocation_id, &eni_id, pod_ip).await?;
         }
         crate::eip::set_status_attached(&eip_api, eip_name, &eni_id, pod_ip).await?;
-        add_dns_target_annotation(&api, name, &public_ip, allocation_id).await?;
-        Ok(())
+        add_dns_target_annotation(&pod_api, name, &public_ip, allocation_id).await?;
+        Ok(None)
     }
 
-    #[instrument(skip(self, client, _api, pod), err)]
+    #[instrument(skip(self, client, pod), err)]
     async fn cleanup(
         &self,
         client: Client,
-        _api: Api<Self::Resource>,
         pod: &Self::Resource,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<Option<Action>, Self::Error> {
         let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
-        event!(Level::INFO, name = %name, "Cleaning up pod.");
 
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
 
@@ -124,7 +122,7 @@ impl eip_operator_shared::controller::Context for Context {
             event!(Level::INFO, should_autocreate_eip = true);
             crate::eip::delete(&eip_api, name).await?;
         }
-        Ok(())
+        Ok(None)
     }
 }
 

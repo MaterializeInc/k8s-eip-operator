@@ -7,13 +7,13 @@ use aws_sdk_servicequotas::types::ServiceQuota;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
 use futures::future::join_all;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
+use k8s_controller::Controller;
 use k8s_openapi::api::core::v1::Pod;
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::{Client, Resource, ResourceExt};
 use tokio::task;
 use tracing::{debug, event, info, instrument, Level};
 
-use eip_operator_shared::controller::Controller;
 use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 
 use eip::v2::Eip;
@@ -123,9 +123,9 @@ async fn run() -> Result<(), Error> {
         let list_params = ListParams::default().labels(MANAGE_EIP_LABEL);
         let pod_controller = match &namespace {
             Some(namespace) => {
-                Controller::namespaced(namespace, k8s_client.clone(), list_params, context)
+                Controller::namespaced(k8s_client.clone(), context, namespace, list_params)
             }
-            None => Controller::namespaced_all(k8s_client.clone(), list_params, context),
+            None => Controller::namespaced_all(k8s_client.clone(), context, list_params),
         };
         task::spawn(pod_controller.run())
     });
@@ -133,7 +133,7 @@ async fn run() -> Result<(), Error> {
     tasks.push({
         let context = controller::node::Context::new(ec2_client.clone(), namespace.clone());
         let list_params = ListParams::default().labels(MANAGE_EIP_LABEL);
-        let node_controller = Controller::cluster(k8s_client.clone(), list_params, context);
+        let node_controller = Controller::cluster(k8s_client.clone(), context, list_params);
         task::spawn(node_controller.run())
     });
 
@@ -141,8 +141,8 @@ async fn run() -> Result<(), Error> {
         let context = controller::eip::Context::new(ec2_client, cluster_name, default_tags);
         let list_params = ListParams::default();
         let eip_controller = match &namespace {
-            Some(namespace) => Controller::namespaced(namespace, k8s_client, list_params, context),
-            None => Controller::namespaced_all(k8s_client, list_params, context),
+            Some(namespace) => Controller::namespaced(k8s_client, context, namespace, list_params),
+            None => Controller::namespaced_all(k8s_client, context, list_params),
         };
         task::spawn(eip_controller.run())
     });

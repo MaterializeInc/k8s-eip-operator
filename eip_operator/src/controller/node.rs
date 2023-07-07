@@ -1,6 +1,7 @@
 use k8s_openapi::api::core::v1::Node;
 use kube::api::{Api, ListParams};
 use kube::Client;
+use kube_runtime::controller::Action;
 use tracing::{event, instrument, Level};
 
 use eip_operator_shared::Error;
@@ -23,19 +24,18 @@ impl Context {
 }
 
 #[async_trait::async_trait]
-impl eip_operator_shared::controller::Context for Context {
+impl k8s_controller::Context for Context {
     type Resource = Node;
     type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/disassociate_node";
 
-    #[instrument(skip(self, client, _api, node), err)]
+    #[instrument(skip(self, client, node), err)]
     async fn apply(
         &self,
         client: Client,
-        _api: Api<Self::Resource>,
         node: &Self::Resource,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<Option<Action>, Self::Error> {
         let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
         event!(Level::INFO, name = %name, "Applying node.");
 
@@ -75,19 +75,15 @@ impl eip_operator_shared::controller::Context for Context {
         }
         crate::eip::set_status_attached(&eip_api, eip_name, &eni_id, node_ip).await?;
 
-        Ok(())
+        Ok(None)
     }
 
-    #[instrument(skip(self, client, _api, node), err)]
+    #[instrument(skip(self, client, node), err)]
     async fn cleanup(
         &self,
         client: Client,
-        _api: Api<Self::Resource>,
         node: &Self::Resource,
-    ) -> Result<(), Self::Error> {
-        let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
-        event!(Level::INFO, name = %name, "Cleaning up node.");
-
+    ) -> Result<Option<Action>, Self::Error> {
         let eip_api = Api::<Eip>::namespaced(
             client.clone(),
             self.namespace.as_deref().unwrap_or("default"),
@@ -116,6 +112,6 @@ impl eip_operator_shared::controller::Context for Context {
             )
             .await?;
         }
-        Ok(())
+        Ok(None)
     }
 }
