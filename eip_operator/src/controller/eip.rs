@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use kube::api::Api;
 use kube::{Client, ResourceExt};
-use tracing::{event, instrument, Level};
+use kube_runtime::controller::Action;
+use tracing::instrument;
 
 use eip_operator_shared::Error;
 
@@ -29,23 +30,23 @@ impl Context {
 }
 
 #[async_trait::async_trait]
-impl eip_operator_shared::controller::Context for Context {
+impl k8s_controller::Context for Context {
     type Resource = Eip;
     type Error = Error;
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/destroy";
 
-    #[instrument(skip(self, _client, api, eip), err)]
+    #[instrument(skip(self, client, eip), err)]
     async fn apply(
         &self,
-        _client: Client,
-        api: Api<Self::Resource>,
+        client: Client,
         eip: &Self::Resource,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<Option<Action>, Self::Error> {
+        let eip_api = Api::namespaced(client, &eip.namespace().unwrap());
+
         let uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
         let name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
         let selector = &eip.spec.selector;
-        event!(Level::INFO, %uid, %name, %selector, "Applying EIP.");
         let addresses = crate::aws::describe_addresses_with_tag_value(
             &self.ec2_client,
             crate::aws::EIP_UID_TAG,
@@ -85,20 +86,17 @@ impl eip_operator_shared::controller::Context for Context {
                 return Err(Error::MultipleEipsTaggedForPod);
             }
         };
-        crate::eip::set_status_created(&api, name, &allocation_id, &public_ip).await?;
-        Ok(())
+        crate::eip::set_status_created(&eip_api, name, &allocation_id, &public_ip).await?;
+        Ok(None)
     }
 
-    #[instrument(skip(self, _client, _api, eip), err)]
+    #[instrument(skip(self, _client, eip), err)]
     async fn cleanup(
         &self,
         _client: Client,
-        _api: Api<Self::Resource>,
         eip: &Self::Resource,
-    ) -> Result<(), Self::Error> {
-        let name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
+    ) -> Result<Option<Action>, Self::Error> {
         let uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
-        event!(Level::INFO, name = %name, uid = %uid, "Cleaning up eip.");
         let addresses = crate::aws::describe_addresses_with_tag_value(
             &self.ec2_client,
             crate::aws::EIP_UID_TAG,
@@ -111,6 +109,6 @@ impl eip_operator_shared::controller::Context for Context {
                 crate::aws::disassociate_and_release_address(&self.ec2_client, &address).await?;
             }
         }
-        Ok(())
+        Ok(None)
     }
 }

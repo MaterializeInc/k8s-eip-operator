@@ -4,13 +4,15 @@ use std::net::AddrParseError;
 use std::str::FromStr;
 use std::time::Duration;
 
-use aws_sdk_ec2::error::{
-    AllocateAddressError, AssociateAddressError, DescribeAddressesError, DescribeInstancesError,
-    DisassociateAddressError, ReleaseAddressError,
-};
-use aws_sdk_ec2::types::SdkError;
-use aws_sdk_servicequotas::error::GetServiceQuotaError;
-use aws_sdk_servicequotas::types::SdkError as ServiceQuotaSdkError;
+use aws_sdk_ec2::error::SdkError;
+use aws_sdk_ec2::operation::allocate_address::AllocateAddressError;
+use aws_sdk_ec2::operation::associate_address::AssociateAddressError;
+use aws_sdk_ec2::operation::describe_addresses::DescribeAddressesError;
+use aws_sdk_ec2::operation::describe_instances::DescribeInstancesError;
+use aws_sdk_ec2::operation::disassociate_address::DisassociateAddressError;
+use aws_sdk_ec2::operation::release_address::ReleaseAddressError;
+use aws_sdk_servicequotas::error::SdkError as ServiceQuotaSdkError;
+use aws_sdk_servicequotas::operation::get_service_quota::GetServiceQuotaError;
 use futures::Future;
 use hyper::client::HttpConnector;
 use hyper_tls::HttpsConnector;
@@ -27,8 +29,6 @@ use tracing_subscriber::layer::{Context as LayerContext, Filter as LayerFilter, 
 use tracing_subscriber::prelude::*;
 
 pub const MANAGE_EIP_LABEL: &str = "eip.materialize.cloud/manage";
-
-pub mod controller;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -14,6 +14,3 @@ rust-version = "1.66.0"
 # the dependency graph. For everything else set the `git` sourcce
 # directly in each dependency entry.
 [patch.crates-io]
-# bump the opentelemetry deps for tonic to 0.7
-opentelemetry = { git = "https://github.com/MaterializeInc/opentelemetry-rust.git" }
-opentelemetry-otlp = { git = "https://github.com/MaterializeInc/opentelemetry-rust.git" }

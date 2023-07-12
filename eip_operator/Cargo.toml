@@ -2,19 +2,21 @@
 name = "eip-operator"
 version = "0.3.0"
 edition = "2021"
+license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-config = "0.51"
-aws-sdk-ec2 = "0.21"
-aws-sdk-servicequotas = "0.21"
-aws-smithy-http = "0.51"
+aws-config = { version = "0.55.1", default-features = false, features = ["native-tls"] }
+aws-sdk-ec2 = { version = "0.26", default-features = false, features = ["native-tls", "rt-tokio"]  }
+aws-sdk-servicequotas = { version = "0.26", default-features = false, features = ["native-tls", "rt-tokio"]  }
+aws-smithy-http = { version = "0.55", default-features = false, features = ["rt-tokio"] }
 futures = "0.3"
-json-patch = "0.2"
-k8s-openapi = { version = "0.16", default-features = false, features = ["v1_22"] }
-kube = { version = "0.75", features = ["derive"] }
-kube-runtime = { version = "0.75" }
+json-patch = "0.3"
+k8s-controller = "0.1.0"
+k8s-openapi = { version = "0.16", default-features = false, features = ["v1_24"] }
+kube = { version = "0.77", features = ["derive"] }
+kube-runtime = { version = "0.77" }
 rand = "0.8"
 schemars = "0.8"
 serde = "1"
@@ -23,4 +25,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tracing = "0.1"
 
 eip-operator-shared = { path = "../eip_operator_shared" }
-async-trait = "0.1.59"
+async-trait = "0.1.71"
