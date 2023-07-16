@@ -747,7 +747,7 @@ dependencies = [
  "aws-smithy-http",
  "eip-operator-shared",
  "futures",
- "json-patch",
+ "json-patch 1.0.0",
  "k8s-controller",
  "k8s-openapi",
  "kube",
@@ -1239,6 +1239,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "json-patch"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f54898088ccb91df1b492cc80029a6fdf1c48ca0db7c6822a8babad69c94658"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "treediff",
+]
+
+[[package]]
 name = "jsonpath_lib"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1338,7 +1350,7 @@ dependencies = [
  "chrono",
  "form_urlencoded",
  "http",
- "json-patch",
+ "json-patch 0.3.0",
  "k8s-openapi",
  "once_cell",
  "schemars",
@@ -1370,7 +1382,7 @@ dependencies = [
  "backoff",
  "derivative",
  "futures",
- "json-patch",
+ "json-patch 0.3.0",
  "k8s-openapi",
  "kube-client",
  "parking_lot",
