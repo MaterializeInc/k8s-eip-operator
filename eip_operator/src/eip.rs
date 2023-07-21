@@ -63,6 +63,7 @@ pub mod v1 {
 }
 
 pub mod v2 {
+    use k8s_openapi::api::core::v1::{Node, Pod};
     use kube::api::Api;
     use kube::{Client, CustomResource, Resource};
     use schemars::JsonSchema;
@@ -140,13 +141,31 @@ pub mod v2 {
             self.metadata.name.as_deref()
         }
 
+        pub fn namespace(&self) -> Option<&str> {
+            self.metadata.namespace.as_deref()
+        }
+
         pub fn attached(&self) -> bool {
             self.status
                 .as_ref()
                 .map_or(false, |status| status.private_ip_address.is_some())
         }
 
-        pub fn matches_pod(&self, pod_name: &str) -> bool {
+        pub fn claimed(&self) -> bool {
+            self.status
+                .as_ref()
+                .map_or(false, |status| status.claim.is_some())
+        }
+
+        pub fn matches_pod(&self, pod: &Pod) -> bool {
+            if pod.metadata.name.is_some() {
+                self.matches_pod_name(pod.metadata.name.as_ref().unwrap())
+            } else {
+                false
+            }
+        }
+
+        pub fn matches_pod_name(&self, pod_name: &str) -> bool {
             match self.spec.selector {
                 EipSelector::Pod {
                     pod_name: ref this_pod_name,
@@ -155,7 +174,15 @@ pub mod v2 {
             }
         }
 
-        pub fn matches_node(&self, node_labels: &BTreeMap<String, String>) -> bool {
+        pub fn matches_node(&self, node: &Node) -> bool {
+            if let Some(labels) = node.metadata.labels.clone() {
+                self.matches_node_labels(&labels)
+            } else {
+                false
+            }
+        }
+
+        pub fn matches_node_labels(&self, node_labels: &BTreeMap<String, String>) -> bool {
             match self.spec.selector {
                 EipSelector::Node { ref selector } => {
                     for (key, value) in selector {
@@ -205,13 +232,14 @@ pub mod v2 {
 }
 
 /// The status fields for the Eip Kubernetes custom resource.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EipStatus {
     pub allocation_id: Option<String>,
     pub public_ip_address: Option<String>,
     pub eni: Option<String>,
     pub private_ip_address: Option<String>,
+    pub claim: Option<String>,
 }
 
 /// Registers the Eip custom resource with Kubernetes,
@@ -277,7 +305,6 @@ async fn upgrade_old_resources(k8s_client: Client, namespace: Option<&str>) -> R
 /// Creates a K8S Eip resource.
 #[instrument(skip(api), err)]
 pub(crate) async fn create_for_pod(api: &Api<Eip>, pod_name: &str) -> Result<Eip, kube::Error> {
-    //info!("Applying K8S Eip: {}", pod_name);
     let patch = Eip::new(
         pod_name,
         EipSpec {
@@ -294,7 +321,6 @@ pub(crate) async fn create_for_pod(api: &Api<Eip>, pod_name: &str) -> Result<Eip
 /// Deletes a K8S Eip resource, if it exists.
 #[instrument(skip(api), err)]
 pub(crate) async fn delete(api: &Api<Eip>, name: &str) -> Result<(), kube::Error> {
-    //info!("Deleting K8S Eip: {}", name);
     match api.delete(name, &DeleteParams::default()).await {
         Ok(_) => Ok(()),
         Err(kube::Error::Api(e)) if e.code == 404 => {
@@ -357,7 +383,7 @@ pub(crate) async fn set_status_attached(
     result
 }
 
-/// Unsets the eni and privateIpAddress fields in the Eip status.
+/// Unsets the eni and privateIpAddress and claim fields in the Eip status.
 #[instrument(skip(api), err)]
 pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Eip, kube::Error> {
     event!(Level::INFO, "Updating status for detached EIP.");
@@ -367,6 +393,7 @@ pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Ei
         "status": {
             "eni": None::<String>,
             "privateIpAddress": None::<String>,
+            "claim": None::<String>,
         }
     });
     let patch = Patch::Merge(&patch);
@@ -374,6 +401,72 @@ pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Ei
     let result = api.patch_status(name, &params, &patch).await;
     if result.is_ok() {
         event!(Level::INFO, "Done updating status for detached EIP.");
+    }
+    result
+}
+
+/// Sets the status to claimed for an eip
+#[instrument(skip(api), err)]
+pub(crate) async fn set_status_claimed(
+    api: &Api<Eip>,
+    name: &str,
+    claim: &str,
+) -> Result<Eip, kube::Error> {
+    event!(Level::INFO, "Updating status claimed for EIP.");
+    let patch = serde_json::json!({
+        "apiVersion": Eip::version(),
+        "kind": "Eip",
+        "status": {
+            "claim": claim,
+        }
+    });
+    let patch = Patch::Merge(&patch);
+    let params = PatchParams::default();
+    let result = api.patch_status(name, &params, &patch).await;
+    if result.is_ok() {
+        event!(Level::INFO, "Done updating status claimed for EIP.");
+    }
+    result
+}
+
+/// Sets the status to unclaimed for an eip
+#[instrument(skip(api), err)]
+pub(crate) async fn set_status_unclaimed(api: &Api<Eip>, name: &str) -> Result<Eip, kube::Error> {
+    event!(Level::INFO, "Updating status for EIP to unclaimed.");
+    let patch = serde_json::json!({
+        "apiVersion": Eip::version(),
+        "kind": "Eip",
+        "status": {
+            "claim": None::<String>,
+        }
+    });
+    let patch = Patch::Merge(&patch);
+    let params = PatchParams::default();
+    let result = api.patch_status(name, &params, &patch).await;
+    if result.is_ok() {
+        event!(Level::INFO, "Done updating status unclaimed for EIP.");
+    }
+    result
+}
+
+/// Patches the status with the provided EipStatus
+#[instrument(skip(api), err)]
+pub(crate) async fn update_status(
+    api: &Api<Eip>,
+    name: &str,
+    status: &EipStatus,
+) -> Result<Eip, kube::Error> {
+    event!(Level::INFO, "Updating status for EIP.");
+    let patch = serde_json::json!({
+        "apiVersion": Eip::version(),
+        "kind": "Eip",
+        "status": status,
+    });
+    let patch = Patch::Merge(&patch);
+    let params = PatchParams::default();
+    let result = api.patch_status(name, &params, &patch).await;
+    if result.is_ok() {
+        event!(Level::INFO, "Done updating status for EIP.");
     }
     result
 }

@@ -57,12 +57,16 @@ pub enum Error {
     MissingEipUid,
     #[error("EIP does not have a name in its metadata.")]
     MissingEipName,
+    #[error("Pod not found.")]
+    MissingPod,
     #[error("Pod does not have a UID in its metadata.")]
     MissingPodUid,
     #[error("Pod does not have a name in its metadata.")]
     MissingPodName,
     #[error("Pod does not have an IP address.")]
     MissingPodIp,
+    #[error("Node not found.")]
+    MissingNode,
     #[error("Node does not have an IP address.")]
     MissingNodeIp,
     #[error("Pod does not have a node name in its spec.")]
@@ -161,15 +165,15 @@ pub enum Error {
         #[from]
         source: tonic::metadata::errors::InvalidMetadataValue,
     },
-    #[error("AddrParse error: {source}")]
-    AddrParse {
-        #[from]
-        source: AddrParseError,
-    },
     #[error("RtNetlink error: {source}")]
     RtNetlink {
         #[from]
         source: rtnetlink::Error,
+    },
+    #[error("AddrParse error: {source}")]
+    AddrParse {
+        #[from]
+        source: AddrParseError,
     },
     #[error("Could not find a rule for that pod installed by Cilium.")]
     CiliumRuleNotFound,

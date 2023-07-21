@@ -132,7 +132,7 @@ async fn run() -> Result<(), Error> {
     });
 
     tasks.push({
-        let context = controller::node::Context::new(ec2_client.clone(), namespace.clone());
+        let context = controller::node::Context::new(namespace.clone());
         let watch_config = kube_runtime::watcher::Config::default().labels(MANAGE_EIP_LABEL);
         let node_controller = Controller::cluster(k8s_client.clone(), context, watch_config);
         task::spawn(node_controller.run())
