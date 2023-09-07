@@ -1,5 +1,5 @@
 FROM rust:1.66.0-slim-bullseye AS chef
-RUN cargo install cargo-chef
+RUN cargo install --locked cargo-chef
 WORKDIR /workdir
 
 FROM chef AS planner
