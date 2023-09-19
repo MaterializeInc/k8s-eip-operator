@@ -165,9 +165,14 @@ async fn run() -> Result<(), Error> {
     let list_params = ListParams::default()
         .labels(MANAGE_EIP_LABEL)
         .fields(&format!("spec.nodeName={}", node_name));
+
+    let wc = kube_runtime::watcher::Config::default()
+        .labels(MANAGE_EIP_LABEL)
+        .fields(&format!("spec.nodeName={}", node_name));
+
     let controller = match namespace {
-        Some(ref namespace) => Controller::namespaced(k8s_client, context, namespace, list_params),
-        None => Controller::namespaced_all(k8s_client, context, list_params),
+        Some(ref namespace) => Controller::namespaced(k8s_client, context, namespace, wc),
+        None => Controller::namespaced_all(k8s_client, context, wc),
     };
     controller.run().await;
 
