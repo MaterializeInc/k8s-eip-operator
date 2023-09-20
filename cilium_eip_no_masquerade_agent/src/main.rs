@@ -4,7 +4,6 @@ use futures::{future, StreamExt, TryStream, TryStreamExt};
 use ipnetwork::Ipv4Network;
 use k8s_controller::Controller;
 use k8s_openapi::api::core::v1::Pod;
-use kube::api::ListParams;
 use kube::Client;
 use kube_runtime::controller::Action;
 use rtnetlink::packet::rule::Nla;
@@ -162,9 +161,6 @@ async fn run() -> Result<(), Error> {
 
     info!("Watching for events...");
     let context = Context::new(handle, vpc_cidr);
-    let list_params = ListParams::default()
-        .labels(MANAGE_EIP_LABEL)
-        .fields(&format!("spec.nodeName={}", node_name));
 
     let wc = kube_runtime::watcher::Config::default()
         .labels(MANAGE_EIP_LABEL)
