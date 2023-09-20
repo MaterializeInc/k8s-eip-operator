@@ -9,20 +9,21 @@ jobs:
   lint:
     runs-on: ubuntu-20.04
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        components: rustfmt, clippy
-    - uses: Swatinem/rust-cache@v1.3.0
-    - uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: -- --check
-    - uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: -- --deny warnings
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v1.3.0
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- --deny warnings
+      - uses: EmbarkStudios/cargo-deny-action@v1
   test:
     runs-on: ubuntu-20.04
     strategy:
@@ -31,27 +32,27 @@ jobs:
       KUBECONFIG: /tmp/kubeconfig
       GITHUB_SHA: ${{ github.sha }}
       KIND_VERSION: "0.14.0"
-      K8S_VERSION: "1.23.13"  # closest hub.docker.com/r/kindest/node version to our EKS deploy
+      K8S_VERSION: "1.23.13" # closest hub.docker.com/r/kindest/node version to our EKS deploy
       KUTTL_VERSION: "0.11.1"
     steps:
-    - uses: actions/checkout@v2
-    - name: Install kubectl
-      run: |
-        curl -LO "https://storage.googleapis.com/kubernetes-release/release/v${K8S_VERSION}/bin/linux/amd64/kubectl"
-        sudo install ./kubectl /usr/local/bin/
-        kubectl version --short --client | grep -q ${K8S_VERSION}
-    - name: Install KinD
-      run: |
-        curl -L -o kind https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64
-        sudo install ./kind /usr/local/bin && rm kind
-        kind version | grep -q ${KIND_VERSION}
-    - name: Install KUTTL
-      run: |
-        curl -L -o kubectl-kuttl https://github.com/kudobuilder/kuttl/releases/download/v${KUTTL_VERSION}/kubectl-kuttl_${KUTTL_VERSION}_linux_x86_64
-        sudo install ./kubectl-kuttl /usr/local/bin && rm kubectl-kuttl
-        kubectl kuttl version | grep -q ${KUTTL_VERSION}
-    - uses: azure/setup-helm@a517f2ff6560563a369e16ca7c7d136b6164423f
-      with:
-        version: v3.6.2
-    - name: Run tests
-      run: ./bin/run-tests
+      - uses: actions/checkout@v2
+      - name: Install kubectl
+        run: |
+          curl -LO "https://storage.googleapis.com/kubernetes-release/release/v${K8S_VERSION}/bin/linux/amd64/kubectl"
+          sudo install ./kubectl /usr/local/bin/
+          kubectl version --short --client | grep -q ${K8S_VERSION}
+      - name: Install KinD
+        run: |
+          curl -L -o kind https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64
+          sudo install ./kind /usr/local/bin && rm kind
+          kind version | grep -q ${KIND_VERSION}
+      - name: Install KUTTL
+        run: |
+          curl -L -o kubectl-kuttl https://github.com/kudobuilder/kuttl/releases/download/v${KUTTL_VERSION}/kubectl-kuttl_${KUTTL_VERSION}_linux_x86_64
+          sudo install ./kubectl-kuttl /usr/local/bin && rm kubectl-kuttl
+          kubectl kuttl version | grep -q ${KUTTL_VERSION}
+      - uses: azure/setup-helm@a517f2ff6560563a369e16ca7c7d136b6164423f
+        with:
+          version: v3.6.2
+      - name: Run tests
+        run: ./bin/run-tests
