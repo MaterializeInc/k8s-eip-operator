@@ -7,14 +7,22 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-sdk-ec2 = { version = "0.26", default-features = false, features = ["native-tls", "rt-tokio"]  }
-aws-sdk-servicequotas = { version = "0.26", default-features = false, features = ["native-tls", "rt-tokio"]  }
-aws-smithy-http = { version = "0.55", default-features = false, features = ["rt-tokio"] }
+aws-sdk-ec2 = { version = "0.26", default-features = false, features = [
+  "native-tls",
+  "rt-tokio",
+] }
+aws-sdk-servicequotas = { version = "0.26", default-features = false, features = [
+  "native-tls",
+  "rt-tokio",
+] }
+aws-smithy-http = { version = "0.55", default-features = false, features = [
+  "rt-tokio",
+] }
 futures = "0.3"
 hyper = { version = "0.14.27", features = ["http2"] }
 hyper-tls = { version = "0.5.0" }
-kube = { version = "0.77", features = ["derive"] }
-kube-runtime = { version = "0.77" }
+kube = { workspace = true }
+kube-runtime = { workspace = true }
 native-tls = { version = "0.2.11", features = ["alpn"] }
 opentelemetry = { version = "0.19", features = ["rt-tokio", "trace"] }
 opentelemetry-otlp = { version = "0.12" }
@@ -22,12 +30,16 @@ serde = "1"
 serde_json = "1"
 thiserror = "1"
 tokio-native-tls = { version = "0.3.1" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true }
 tonic = { version = "0.8.2", features = ["transport"] }
 tracing = "0.1"
 tracing-opentelemetry = "0.19"
-tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "json"] }
+tracing-subscriber = { version = "0.3", features = [
+  "registry",
+  "env-filter",
+  "json",
+] }
 
-rtnetlink = { git = "https://github.com/MaterializeInc/netlink.git", branch = "priority_support" }
-async-trait = "0.1.71"
-rand = "0.8.5"
+rtnetlink = { workspace = true }
+async-trait = { workspace = true }
+rand = { workspace = true }
