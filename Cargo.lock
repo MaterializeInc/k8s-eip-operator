@@ -207,9 +207,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-servicequotas"
-version = "0.26.0"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25255c266bd81784af20d19ddbef593e9b00d299f219d6c75eb73bbb128a7588"
+checksum = "87bc114a6e96f15b8ca1a68621ef44ba4ded021e9587633efac3cfedf716929a"
 dependencies = [
  "aws-credential-types",
  "aws-endpoint",
