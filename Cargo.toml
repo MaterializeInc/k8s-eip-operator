@@ -28,7 +28,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 kube = { version = "0.85.0", features = ["derive"] }
 kube-runtime = "0.85.0"
 tracing = "0.1"
-async-trait = "0.1.71"
+async-trait = "0.1.73"
 futures = "0.3"
 
 eip-operator-shared = { path = "eip_operator_shared" }
