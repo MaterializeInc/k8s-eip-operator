@@ -13,6 +13,14 @@ multiple-versions = "deny"
 skip = [
     { name = "syn", version = "1.0.109" },
     { name = "syn", version = "2.0.23" },
+    { name = "base64", version = "0.13.1" },
+    { name = "base64", version = "0.21.0" },
+    { name = "bitflags", version = "1.3.2" },
+    { name = "bitflags", version = "2.3.3" },
+    { name = "indexmap", version = "1.9.1" },
+    { name = "indexmap", version = "2.0.0" },
+    { name = "hashbrown", version = "0.12.3" },
+    { name = "hashbrown", version = "0.14.0" },
 ]
 
 # Use `tracing` instead.
