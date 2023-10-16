@@ -18,7 +18,7 @@ rust-version = "1.66.0"
 [patch.crates-io]
 
 [workspace.dependencies]
-json-patch = "1.1.0"
+json-patch = "1.2.0"
 k8s-controller = "0.2.0"
 k8s-openapi = { version = "0.19", default-features = false, features = [
     "v1_25",
