@@ -25,7 +25,7 @@ kube = { workspace = true }
 kube-runtime = { workspace = true }
 native-tls = { version = "0.2.11", features = ["alpn"] }
 opentelemetry = { version = "0.19", features = ["rt-tokio", "trace"] }
-opentelemetry-otlp = { version = "0.12" }
+opentelemetry-otlp = { version = "0.14" }
 serde = "1"
 serde_json = "1"
 thiserror = "1"
