@@ -8,7 +8,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.66.0"
+rust-version = "1.73.0"
 
 
 # Use this section only to change the source of dependencies that might
@@ -18,12 +18,15 @@ rust-version = "1.66.0"
 [patch.crates-io]
 
 [workspace.dependencies]
+iptables = "0.5"
 json-patch = "1.2.0"
 k8s-controller = "0.2.0"
 k8s-openapi = { version = "0.19", default-features = false, features = [
     "v1_25",
 ] }
+netlink-packet-route = "0.17"
 rand = "0.8"
+rtnetlink = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 kube = { version = "0.85.0", features = ["derive"] }
 kube-runtime = "0.85.0"
@@ -32,5 +35,3 @@ async-trait = "0.1.74"
 futures = "0.3"
 
 eip-operator-shared = { path = "eip_operator_shared" }
-# rtnetlink = "0.12.0"
-rtnetlink = { git = "https://github.com/MaterializeInc/netlink.git", branch = "priority_support" }

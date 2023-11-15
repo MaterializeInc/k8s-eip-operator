@@ -1,4 +1,4 @@
-FROM rust:1.66.0-slim-bullseye AS chef
+FROM rust:1.73.0-slim-bookworm AS chef
 RUN cargo install --locked cargo-chef
 WORKDIR /workdir
 
@@ -18,7 +18,9 @@ RUN cargo chef cook $CARGO_RELEASE $CARGO_FEATURES --recipe-path recipe.json
 COPY . .
 RUN cargo build $CARGO_RELEASE $CARGO_FEATURES
 
-FROM gcr.io/distroless/cc-debian11
+FROM debian:bookworm-20231030-slim
+RUN apt-get update && apt-get install -y iptables ca-certificates && rm -rf /var/ib/apt/lists/*
+RUN update-alternatives --set iptables /usr/sbin/iptables-legacy
 COPY --from=builder /workdir/target/*/eip-operator /
 COPY --from=builder /workdir/target/*/cilium-eip-no-masquerade-agent /
 ENTRYPOINT ["./eip-operator"]
