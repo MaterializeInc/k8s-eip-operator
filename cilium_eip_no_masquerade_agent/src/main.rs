@@ -18,6 +18,11 @@ use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 const FINALIZER_NAME: &str = "eip.materialize.cloud/cilium-no-masquerade-rule";
 const TABLE: &str = "mangle";
 const CHAIN: &str = "CILIUM_PRE_mangle";
+const FW_MASK: u32 = 0xf;
+// eth1
+const FIRST_SECONDARY_ENI_INDEX: u32 = 1;
+// eth15, No AWS instance type supports more than 15 ENIs
+const LAST_SECONDARY_ENI_INDEX: u32 = 15;
 
 async fn filter_pod_rules(
     rules: impl TryStream<Ok = RuleMessage, Error = rtnetlink::Error>,
@@ -87,12 +92,12 @@ impl RuleManager {
                 .execute()
                 .into_stream();
             let pod_rules = filter_pod_rules(rules, pod_ip).await?;
-            for rule in pod_rules {
-                if rule.header.dst_len == 0 && rule.header.action == 1 {
-                    event!(Level::INFO, pod_name = %pod_name, pod_ip = %pod_ip, rule = ?rule, "Deleting rule.");
-                    self.ip_rule_handle.del(rule).execute().await?;
-                    break;
-                }
+            if let Some(rule) = pod_rules
+                .into_iter()
+                .find(|rule| rule.header.dst_len == 0 && rule.header.action == 1)
+            {
+                event!(Level::INFO, pod_name = %pod_name, pod_ip = %pod_ip, rule = ?rule, "Deleting rule.");
+                self.ip_rule_handle.del(rule).execute().await?;
             }
         }
         self.remove_finalizer(pod, pod_name).await;
@@ -146,7 +151,7 @@ impl RuleManager {
     ) -> Result<HashSet<u32>, rtnetlink::Error> {
         let rules = self.ip_rule_handle.get(IpVersion::V4).execute();
         rules
-            .try_filter(|rule| future::ready(rule.nlas.contains(&Nla::FwMask(0xf))))
+            .try_filter(|rule| future::ready(rule.nlas.contains(&Nla::FwMask(FW_MASK))))
             .map_ok(|rule| {
                 rule.nlas
                     .into_iter()
@@ -156,48 +161,42 @@ impl RuleManager {
                     })
                     .expect("There should always be an associated mark if there is a mask.")
             })
-            .collect::<Vec<Result<u32, rtnetlink::Error>>>()
+            .try_collect()
             .await
-            .into_iter()
-            .collect()
     }
 
-    fn ensure_iptables_rule(&self, rule: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.iptables.exists(TABLE, CHAIN, rule)? {
-            event!(Level::INFO, rule = ?rule, "Appending iptables rule");
-            self.iptables.append(TABLE, CHAIN, rule)?;
-        }
-        Ok(())
-    }
-
-    fn ensure_restore_mark_iptables_rule(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let rule = "-i lxc+ -m comment --comment \"cilium: secondary interfaces\" -j CONNMARK --restore-mark --nfmask 0xf --ctmask 0xf";
-        self.ensure_iptables_rule(rule)?;
+    fn ensure_restore_mark_iptables_rule(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let rule = format!("-i lxc+ -m comment --comment \"cilium: secondary interfaces\" -j CONNMARK --restore-mark --nfmask {FW_MASK} --ctmask {FW_MASK}");
+        self.iptables.append_unique(TABLE, CHAIN, &rule)?;
         Ok(())
     }
 
     fn ensure_mark_iptables_rule(
-        &self,
+        &mut self,
         interface_index: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let rule = format!("-i eth{interface_index} -m comment --comment \"cilium: eth{interface_index}\" -m addrtype --dst-type UNICAST --limit-iface-in -j CONNMARK --set-xmark 0x{interface_index}/0xf");
-        self.ensure_iptables_rule(&rule)?;
+        let rule = format!("-i eth{interface_index} -m comment --comment \"cilium: eth{interface_index}\" -m addrtype --dst-type UNICAST --limit-iface-in -j CONNMARK --set-xmark 0x{interface_index}/{FW_MASK}");
+        self.iptables.append_unique(TABLE, CHAIN, &rule)?;
         Ok(())
     }
 
-    async fn insert_ip_rule(&self, interface_index: u32) -> Result<(), rtnetlink::Error> {
+    async fn insert_ip_rule(&mut self, interface_index: u32) -> Result<(), rtnetlink::Error> {
         info!("Inserting ip rule for eth{interface_index}");
-        // ip rule add pref 100 from all fwmark 0x{i}/0xf lookup {10 + i}
+        // ip rule add pref 100 from all fwmark 0x{i}/{FW_MASK} lookup {10 + i}
+        //
+        // The 100 priority is somewhat arbitrary, but it is before the rules Cilium injects
+        // for the eth0 marks and for in-VPC traffic, but after the local and pod inbound rules.
         let mut rule_add_request = self
             .ip_rule_handle
             .add()
             .v4()
+            // Cilium starts numbering tables for secondary ENI local traffic at 11.
             .table_id(10 + interface_index)
             .action(1) // Not sure what this action is, but it seems to work
             .priority(100);
         let message = rule_add_request.message_mut();
         message.nlas.push(Nla::FwMark(interface_index));
-        message.nlas.push(Nla::FwMask(0xf));
+        message.nlas.push(Nla::FwMask(FW_MASK));
         rule_add_request.execute().await
     }
 }
@@ -211,16 +210,15 @@ fn main() -> Result<(), Error> {
 }
 
 async fn run() -> Result<(), Error> {
-    let manager = RuleManager::new().await;
+    let mut manager = RuleManager::new().await;
 
     loop {
         manager.wait_for_chain_to_exist().await.unwrap();
 
-        let existing_ip_rules = manager.get_eni_indexes_for_existing_ip_rules().await?;
-
         manager.ensure_restore_mark_iptables_rule().unwrap();
 
-        for i in 1..=15 {
+        let existing_ip_rules = manager.get_eni_indexes_for_existing_ip_rules().await?;
+        for i in FIRST_SECONDARY_ENI_INDEX..=LAST_SECONDARY_ENI_INDEX {
             manager.ensure_mark_iptables_rule(i).unwrap();
 
             if !existing_ip_rules.contains(&i) {
