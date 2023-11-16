@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
 
-use futures::{future, StreamExt, TryStream, TryStreamExt};
+use futures::{future, TryStream, TryStreamExt};
 use iptables::IPTables;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_openapi::api::core::v1::Pod;
@@ -35,10 +35,8 @@ async fn filter_pod_rules(
                     && rule.nlas.contains(&Nla::Source(pod_ip.octets().to_vec())),
             )
         })
-        .collect::<Vec<Result<RuleMessage, rtnetlink::Error>>>()
+        .try_collect()
         .await
-        .into_iter()
-        .collect()
 }
 
 struct RuleManager {
@@ -100,11 +98,11 @@ impl RuleManager {
                 self.ip_rule_handle.del(rule).execute().await?;
             }
         }
-        self.remove_finalizer(pod, pod_name).await;
+        self.remove_finalizer(pod, pod_name).await?;
         Ok(())
     }
 
-    async fn remove_finalizer(&self, pod: &Pod, pod_name: &str) {
+    async fn remove_finalizer(&self, pod: &Pod, pod_name: &str) -> Result<(), Error> {
         // https://docs.rs/kube-runtime/latest/src/kube_runtime/finalizer.rs.html
         let finalizer_index = pod
             .finalizers()
@@ -132,9 +130,9 @@ impl RuleManager {
                         }),
                     ])),
                 )
-                .await
-                .unwrap();
+                .await?;
         }
+        Ok(())
     }
 
     async fn wait_for_chain_to_exist(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -165,9 +163,17 @@ impl RuleManager {
             .await
     }
 
+    fn ensure_iptables_rule(&self, rule: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.iptables.exists(TABLE, CHAIN, rule)? {
+            event!(Level::INFO, rule = ?rule, "Appending iptables rule");
+            self.iptables.append(TABLE, CHAIN, rule)?;
+        }
+        Ok(())
+    }
+
     fn ensure_restore_mark_iptables_rule(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let rule = format!("-i lxc+ -m comment --comment \"cilium: secondary interfaces\" -j CONNMARK --restore-mark --nfmask {FW_MASK} --ctmask {FW_MASK}");
-        self.iptables.append_unique(TABLE, CHAIN, &rule)?;
+        self.ensure_iptables_rule(&rule)?;
         Ok(())
     }
 
@@ -176,7 +182,7 @@ impl RuleManager {
         interface_index: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let rule = format!("-i eth{interface_index} -m comment --comment \"cilium: eth{interface_index}\" -m addrtype --dst-type UNICAST --limit-iface-in -j CONNMARK --set-xmark 0x{interface_index}/{FW_MASK}");
-        self.iptables.append_unique(TABLE, CHAIN, &rule)?;
+        self.ensure_iptables_rule(&rule)?;
         Ok(())
     }
 
