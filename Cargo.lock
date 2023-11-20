@@ -19,14 +19,15 @@ checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
 name = "ahash"
-version = "0.8.3"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c99f64d1e06488f620f932677e24bc6e2897582980441ae90a671415bd7ec2f"
+checksum = "cd7d5a2cecb58716e47d67d5703a249964b14c7be1ec3cad3affc295b2d1c35d"
 dependencies = [
  "cfg-if",
  "getrandom",
  "once_cell",
  "version_check",
+ "zerocopy",
 ]
 
 [[package]]
@@ -61,9 +62,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.71"
+version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c7d0618f0e0b7e8ff11427422b64564d5fb0be1940354bfe2e0529b18a9d9b8"
+checksum = "a4668cab20f66d8d020e1fbc0ebe47217433c1b6c8f2040faf858554e394ace6"
 
 [[package]]
 name = "async-stream"
@@ -593,16 +594,16 @@ dependencies = [
 
 [[package]]
 name = "cilium-eip-no-masquerade-agent"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "eip-operator-shared",
  "futures",
- "ipnetwork",
- "k8s-controller",
+ "iptables",
+ "json-patch",
  "k8s-openapi",
  "kube",
- "kube-runtime",
+ "netlink-packet-route",
  "rand",
  "rtnetlink",
  "tokio",
@@ -1232,12 +1233,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "ipnetwork"
-version = "0.20.0"
+name = "iptables"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
+checksum = "d39f0d72d0feb83c9b7f4e1fbde2b4a629886f30841127b3f86383831dba2629"
 dependencies = [
- "serde",
+ "lazy_static",
+ "nix 0.27.1",
+ "regex",
 ]
 
 [[package]]
@@ -1540,19 +1543,20 @@ dependencies = [
 
 [[package]]
 name = "netlink-packet-core"
-version = "0.4.2"
-source = "git+https://github.com/MaterializeInc/netlink.git?branch=priority_support#b73800bd39ac10b52fd227465d6e86275b9c8b4e"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72724faf704479d67b388da142b186f916188505e7e0b26719019c525882eda4"
 dependencies = [
  "anyhow",
  "byteorder",
- "libc",
  "netlink-packet-utils",
 ]
 
 [[package]]
 name = "netlink-packet-route"
-version = "0.12.0"
-source = "git+https://github.com/MaterializeInc/netlink.git?branch=priority_support#b73800bd39ac10b52fd227465d6e86275b9c8b4e"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "053998cea5a306971f88580d0829e90f270f940befd7cf928da179d4187a5a66"
 dependencies = [
  "anyhow",
  "bitflags 1.3.2",
@@ -1564,8 +1568,9 @@ dependencies = [
 
 [[package]]
 name = "netlink-packet-utils"
-version = "0.5.1"
-source = "git+https://github.com/MaterializeInc/netlink.git?branch=priority_support#b73800bd39ac10b52fd227465d6e86275b9c8b4e"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ede8a08c71ad5a95cdd0e4e52facd37190977039a4704eb82a283f713747d34"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -1575,8 +1580,9 @@ dependencies = [
 
 [[package]]
 name = "netlink-proto"
-version = "0.10.0"
-source = "git+https://github.com/MaterializeInc/netlink.git?branch=priority_support#b73800bd39ac10b52fd227465d6e86275b9c8b4e"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "842c6770fc4bb33dd902f41829c61ef872b8e38de1405aa0b938b27b8fba12c3"
 dependencies = [
  "bytes",
  "futures",
@@ -1589,8 +1595,9 @@ dependencies = [
 
 [[package]]
 name = "netlink-sys"
-version = "0.8.3"
-source = "git+https://github.com/MaterializeInc/netlink.git?branch=priority_support#b73800bd39ac10b52fd227465d6e86275b9c8b4e"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6471bf08e7ac0135876a9581bf3217ef0333c191c128d34878079f42ee150411"
 dependencies = [
  "bytes",
  "futures",
@@ -1601,11 +1608,22 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.24.3"
+version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa52e972a9a719cecb6864fb88568781eb706bac2cd1d4f04a648542dbf78069"
+checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.4.0",
  "cfg-if",
  "libc",
 ]
@@ -2004,14 +2022,18 @@ checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "rtnetlink"
-version = "0.10.1"
-source = "git+https://github.com/MaterializeInc/netlink.git?branch=priority_support#b73800bd39ac10b52fd227465d6e86275b9c8b4e"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a552eb82d19f38c3beed3f786bd23aa434ceb9ac43ab44419ca6d67a7e186c0"
 dependencies = [
  "futures",
  "log",
+ "netlink-packet-core",
  "netlink-packet-route",
+ "netlink-packet-utils",
  "netlink-proto",
- "nix",
+ "netlink-sys",
+ "nix 0.26.4",
  "thiserror",
  "tokio",
 ]
@@ -2912,6 +2934,26 @@ name = "xmlparser"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d25c75bf9ea12c4040a97f829154768bbbce366287e2dc044af160cd79a13fd"
+
+[[package]]
+name = "zerocopy"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a7af71d8643341260a65f89fa60c0eeaa907f34544d8f6d9b0df72f069b5e74"
+dependencies = [
+ "zerocopy-derive",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9731702e2f0617ad526794ae28fbc6f6ca8849b5ba729666c2a5bc4b6ddee2cd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.23",
+]
 
 [[package]]
 name = "zeroize"

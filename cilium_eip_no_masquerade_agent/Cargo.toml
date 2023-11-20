@@ -1,22 +1,21 @@
 [package]
 name = "cilium-eip-no-masquerade-agent"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-trait = { workspace = true }
+eip-operator-shared = { workspace = true }
 futures = { workspace = true }
-ipnetwork = "0.20"
-k8s-controller = { workspace = true }
+iptables = { workspace = true }
+json-patch = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true, features = ["derive"] }
-kube-runtime = { workspace = true }
+netlink-packet-route = { workspace = true }
 rand = { workspace = true }
 rtnetlink = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-
-eip-operator-shared = { workspace = true }
-async-trait = { workspace = true }
