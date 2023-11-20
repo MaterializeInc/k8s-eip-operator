@@ -188,10 +188,10 @@ impl RuleManager {
 
     async fn insert_ip_rule(&mut self, interface_index: u32) -> Result<(), rtnetlink::Error> {
         info!("Inserting ip rule for eth{interface_index}");
-        // ip rule add pref 100 from all fwmark 0x{i}/{FW_MASK} lookup {10 + i}
+        // ip rule add pref 200 from all fwmark 0x{i}/{FW_MASK} lookup {10 + i}
         //
-        // The 100 priority is somewhat arbitrary, but it is before the rules Cilium injects
-        // for the eth0 marks and for in-VPC traffic, but after the local and pod inbound rules.
+        // The 200 priority is somewhat arbitrary, but it is after the rules Cilium injects
+        // for the eth0 marks and for in-VPC traffic, and after the local and pod inbound rules.
         let mut rule_add_request = self
             .ip_rule_handle
             .add()
@@ -199,7 +199,7 @@ impl RuleManager {
             // Cilium starts numbering tables for secondary ENI local traffic at 11.
             .table_id(10 + interface_index)
             .action(1) // Not sure what this action is, but it seems to work
-            .priority(100);
+            .priority(200);
         let message = rule_add_request.message_mut();
         message.nlas.push(Nla::FwMark(interface_index));
         message.nlas.push(Nla::FwMask(FW_MASK));
