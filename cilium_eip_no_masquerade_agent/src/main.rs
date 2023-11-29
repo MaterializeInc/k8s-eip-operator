@@ -181,7 +181,7 @@ impl RuleManager {
         &mut self,
         interface_index: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let rule = format!("-i eth{interface_index} -m comment --comment \"cilium: eth{interface_index}\" -m addrtype --dst-type UNICAST --limit-iface-in -j CONNMARK --set-xmark 0x{interface_index}/{FW_MASK}");
+        let rule = format!("-i eth{interface_index} -m comment --comment \"cilium: eth{interface_index}\" -m addrtype --dst-type UNICAST --limit-iface-in -j CONNMARK --set-xmark 0x{interface_index:x}/{FW_MASK}");
         self.ensure_iptables_rule(&rule)?;
         Ok(())
     }
