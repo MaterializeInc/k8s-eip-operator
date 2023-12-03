@@ -20,7 +20,7 @@ rust-version = "1.74.0"
 [workspace.dependencies]
 iptables = "0.5"
 json-patch = "1.2.0"
-k8s-controller = "0.2.0"
+k8s-controller = "0.2.1"
 k8s-openapi = { version = "0.19", default-features = false, features = [
     "v1_25",
 ] }
