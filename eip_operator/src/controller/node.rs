@@ -2,7 +2,7 @@ use k8s_openapi::api::core::v1::Node;
 use kube::api::{Api, ListParams};
 use kube::Client;
 use kube_runtime::controller::Action;
-use tracing::{event, instrument, Level};
+use tracing::{event, instrument, trace, Level};
 
 use eip_operator_shared::Error;
 
@@ -38,6 +38,37 @@ impl k8s_controller::Context for Context {
     ) -> Result<Option<Action>, Self::Error> {
         let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
         event!(Level::INFO, name = %name, "Applying node.");
+        // Ignore Cordoned nodes
+        // Ignore non Ready nodes
+        match node.spec.clone() {
+            Some(spec) => {
+                if spec.unschedulable.unwrap_or_default() {
+                    trace!(
+                        "Node {} is not schedulelable and will not recieve EIP",
+                        name
+                    );
+                    return Ok(None);
+                }
+                match &spec.taints {
+                    Some(taints) => {
+                        if taints.into_iter().any(|taint| {
+                            taint.effect == "NoExecute"
+                                && (taint.value
+                                    == Some(String::from("node.cilium.io/agent-not-ready"))
+                                    || taint.value
+                                        == Some(String::from("node.cilium.io/not-ready")))
+                        }) {
+                            trace!("Node {} is not ready and will not recieve EIP", name);
+                            return Ok(None);
+                        }
+                    }
+                    _ => {
+                        // no taints, proceed
+                    }
+                }
+            }
+            _ => trace!("No node spec for node {}", name),
+        }
 
         let eip_api = Api::<Eip>::namespaced(
             client.clone(),
