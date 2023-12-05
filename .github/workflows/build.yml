@@ -12,34 +12,53 @@ jobs:
   lint:
     runs-on: ubuntu-20.04
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        components: rustfmt, clippy
-    - uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: -- --check
-    - uses: actions-rs/cargo@v1
-      with:
-        command: clippy
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
   build:
     needs: lint
     runs-on: ubuntu-20.04
     steps:
-    - uses: actions/checkout@v2
-    - uses: docker/setup-buildx-action@v1
-    - uses: docker/login-action@v1
-      with:
-        username: materializebot
-        password: ${{ secrets.DOCKER_HUB_MATERIALIZEBOT_API_KEY }}
-    - uses: docker/build-push-action@v2
-      with:
-        push: true
-        tags: |
-          materialize/k8s-eip-operator:${{ github.sha }}
-          materialize/k8s-eip-operator:latest
-        platforms: linux/amd64,linux/arm64
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - uses: actions/checkout@v2
+      - uses: docker/setup-buildx-action@v1
+      - uses: docker/login-action@v1
+        with:
+          username: materializebot
+          password: ${{ secrets.DOCKER_HUB_MATERIALIZEBOT_API_KEY }}
+      - uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: |
+            materialize/k8s-eip-operator:${{ github.sha }}
+            materialize/k8s-eip-operator:latest
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+  build-mac:
+    needs: lint
+    runs-on: macos-latest-large
+    steps:
+      - uses: actions/checkout@v2
+      - uses: docker/setup-buildx-action@v1
+      - uses: docker/login-action@v1
+        with:
+          username: materializebot
+          password: ${{ secrets.DOCKER_HUB_MATERIALIZEBOT_API_KEY }}
+      - uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: |
+            materialize/k8s-eip-operator:${{ github.sha }}
+            materialize/k8s-eip-operator:latest
+          platforms: linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
