@@ -18,7 +18,7 @@ aws-sdk-servicequotas = { version = "0.28", default-features = false, features =
   "native-tls",
   "rt-tokio",
 ] }
-aws-smithy-http = { version = "0.55", default-features = false, features = [
+aws-smithy-http = { version = "0.61", default-features = false, features = [
   "rt-tokio",
 ] }
 futures = { workspace = true }
