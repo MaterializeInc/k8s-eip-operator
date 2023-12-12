@@ -13,7 +13,7 @@ futures = { workspace = true }
 iptables = { workspace = true }
 json-patch = { workspace = true }
 k8s-openapi = { workspace = true }
-kube = { workspace = true, features = ["derive"] }
+kube = { workspace = true }
 netlink-packet-route = { workspace = true }
 rand = { workspace = true }
 rtnetlink = { workspace = true }
