@@ -45,10 +45,12 @@ jobs:
           cache-to: type=gha,mode=max
   build-mac:
     needs: lint
-    runs-on: macos-latest-large
+    # Apparently colima was removed from macos-13-large, so hardcode 12 instead of latest
+    runs-on: macos-12-large
     steps:
       - uses: actions/checkout@v2
-      - uses: docker/setup-buildx-action@v1
+      - uses: douglascamata/setup-docker-macos-action@v1-alpha
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v1
         with:
           username: materializebot
