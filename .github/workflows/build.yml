@@ -45,7 +45,7 @@ jobs:
           cache-to: type=gha,mode=max
   build-mac:
     needs: lint
-    runs-on: macos-13-large
+    runs-on: macos-13-xlarge
     steps:
       - uses: actions/checkout@v2
       - uses: douglascamata/setup-docker-macos-action@v1-alpha.10
