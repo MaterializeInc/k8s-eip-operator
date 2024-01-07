@@ -34,7 +34,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 eip-operator-shared = { workspace = true }
-async-trait = "0.1.76"
+async-trait = "0.1.77"
 k8s-openapi = { workspace = true }
 json-patch = { workspace = true }
 k8s-controller = { workspace = true }
