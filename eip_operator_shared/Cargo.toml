@@ -20,7 +20,7 @@ aws-smithy-http = { version = "0.55", default-features = false, features = [
 ] }
 futures = "0.3"
 hyper = { version = "0.14.27", features = ["http2"] }
-hyper-tls = { version = "0.5.0" }
+hyper-tls = { version = "0.6.0" }
 kube = { workspace = true }
 kube-runtime = { workspace = true }
 native-tls = { version = "0.2.11", features = ["alpn"] }
