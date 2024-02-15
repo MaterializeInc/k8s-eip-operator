@@ -244,7 +244,7 @@ async fn run() -> Result<(), Error> {
             manager.cleanup_legacy_per_pod_rules(&pod).await?;
         }
 
-        let delay_secs = 600;
+        let delay_secs = 1;
         info!("Done! Will recheck in {delay_secs} seconds");
         sleep(Duration::from_secs(delay_secs)).await;
     }
