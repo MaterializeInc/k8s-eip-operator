@@ -1,11 +1,13 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use k8s_openapi::api::core::v1::{Node, Pod};
+use k8s_openapi::Metadata;
 use kube::api::{Api, ListParams};
 use kube::Client;
 use kube_runtime::controller::Action;
 use tracing::instrument;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use eip_operator_shared::Error;
 
@@ -45,7 +47,8 @@ impl k8s_controller::Context for Context {
         client: Client,
         eip: &Self::Resource,
     ) -> Result<Option<Action>, Self::Error> {
-        let eip_api = Api::namespaced(client.clone(), eip.namespace().unwrap());
+        let namespaced = Api::namespaced(client.clone(), eip.namespace().unwrap());
+        let eip_api = namespaced;
         let pod_api = Api::<Pod>::namespaced(client.clone(), eip.namespace().unwrap());
         let node_api = Api::<Node>::all(client.clone());
 
@@ -63,7 +66,9 @@ impl k8s_controller::Context for Context {
         .await?
         .addresses
         .ok_or(Error::MissingAddresses)?;
-        let allocation_id = match addresses.len() {
+
+        // Ensure the EIP Exists
+        let _allocation_id = match addresses.len() {
             0 => {
                 let response = crate::aws::allocate_address(
                     &self.ec2_client,
@@ -99,44 +104,73 @@ impl k8s_controller::Context for Context {
             }
         };
 
-        // disassociate if unclaimed or if claimed and the node / pod terminating
-        let mut disassociate = status.claim.is_none();
-        if let Some(claim) = status.claim.clone() {
-            match &eip.spec.selector {
-                EipSelector::Node { selector: _ } => {
-                    if let Some(node) = node_api.get_opt(&claim.clone()).await? {
-                        disassociate = node.metadata.deletion_timestamp.is_some();
-                    }
-                }
-                EipSelector::Pod { pod_name: _ } => {
-                    if let Some(pod) = pod_api.get_opt(&claim.clone()).await? {
-                        disassociate = pod.metadata.deletion_timestamp.is_some()
-                    }
-                }
+        // Handle association / disassociatino
+        // disassociate if:
+        // - associated, but no longer has a claim (with caveot)
+        // - resource with claim is terminating or gone
+        // - resource with claim no longer matches
+        // associate if
+        //  - not associated and claim
+        let originally_unclaimed = status.claim.is_some();
+
+        // get potential attachments
+        let matched_pods: Vec<Pod> = if eip.selects_with_pod() {
+            pod_api
+                .list(&ListParams::default())
+                .await?
+                .into_iter()
+                .filter(|pod| eip.matches_pod(pod) && pod.metadata.deletion_timestamp.is_none())
+                .collect()
+        } else {
+            vec![]
+        };
+        let matched_nodes: Vec<Node> = if eip.selects_with_node() {
+            node_api
+                .list(&ListParams::default())
+                .await?
+                .into_iter()
+                .filter(|node| {
+                    eip.matches_node(node) && node.metadata().deletion_timestamp.is_none()
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
+        // Check to make sure our resource still matches
+        // incase our selectors have updated, or the nodes/pods we have
+        // claimed have changed
+        let selector_or_resource_changed_claim = match &eip.spec.selector {
+            EipSelector::Pod { pod_name: _ } => {
+                // pods match by name which is unique within a namespace and cannot be renamed
+                // if this list is empty we should drop the claim and disassociate
+                // otherwise we're good
+                matched_pods.is_empty()
             }
-        }
-        if disassociate {
-            crate::aws::disassociate_eip(&self.ec2_client, &allocation_id).await?;
+            EipSelector::Node { selector: _ } => {
+                // check if our claim is still in the node match list
+                // if so we don't need to disassociate
+                !matched_nodes
+                    .iter()
+                    .any(|n| n.metadata.name == status.claim)
+            }
+        };
+        // We need to remove our claim
+        if selector_or_resource_changed_claim {
+            info!("Selector or resource changed, claim has been updated!");
             status.claim = None;
-            status.eni = None;
-            status.private_ip_address = None;
         }
 
-        // search for new resource to be claimed by
-        match eip.spec.selector {
-            EipSelector::Node { selector: _ } => {
-                let nodes: Vec<Node> = node_api
-                    .list(&ListParams::default())
-                    .await?
-                    .into_iter()
-                    .filter(|node| eip.matches_node(node))
-                    .collect();
-                match nodes.len() {
+        // Find new claim, it's possible it'll match the existing
+        // association, in which case, we won't disassociate
+        if status.claim.is_none() {
+            match eip.spec.selector {
+                EipSelector::Node { selector: _ } => match matched_nodes.len() {
                     0 => {
                         warn!("Eip {} matches no nodes", name);
                     }
                     1 => {
-                        let node_name = nodes[0]
+                        let node_name = matched_nodes[0]
                             .metadata
                             .name
                             .clone()
@@ -146,25 +180,24 @@ impl k8s_controller::Context for Context {
                     }
                     _ => {
                         warn!(
-                            "Eip {} matches multiple nodes - {}",
+                            "Eip {} matches multiple nodes - {}, choosing the first",
                             name,
-                            nodes
+                            matched_nodes
                                 .iter()
                                 .map(|node| { node.metadata.name.clone().unwrap_or_default() })
                                 .collect::<Vec<String>>()
                                 .join(",")
                         );
+                        let node_name = matched_nodes[0]
+                            .metadata
+                            .name
+                            .clone()
+                            .ok_or(Error::MissingNodeName)?;
+                        info!("Eip {} matches node {}, updating claim", name, node_name,);
+                        status.claim = Some(node_name);
                     }
-                }
-            }
-            EipSelector::Pod { pod_name: _ } => {
-                let pods: Vec<Pod> = pod_api
-                    .list(&ListParams::default())
-                    .await?
-                    .into_iter()
-                    .filter(|pod| eip.matches_pod(pod))
-                    .collect();
-                match pods.len() {
+                },
+                EipSelector::Pod { pod_name: _ } => match matched_pods.len() {
                     0 => {
                         warn!("Eip {} matches no pods", name);
                     }
@@ -172,28 +205,87 @@ impl k8s_controller::Context for Context {
                         info!(
                             "Eip {} matches pod {}, updating claim",
                             name,
-                            pods[0].metadata.name.clone().ok_or(Error::MissingPodName)?,
+                            matched_pods[0]
+                                .metadata
+                                .name
+                                .clone()
+                                .ok_or(Error::MissingPodName)?,
                         );
-                        status.claim =
-                            Some(pods[0].metadata.name.clone().ok_or(Error::MissingPodName)?);
+                        status.claim = Some(
+                            matched_pods[0]
+                                .metadata
+                                .name
+                                .clone()
+                                .ok_or(Error::MissingPodName)?,
+                        );
                     }
                     _ => {
-                        info!(
+                        error!(
                             "Eip {} matches multiple pods - {}",
                             name,
-                            pods.iter()
+                            matched_pods
+                                .iter()
                                 .map(|pod| { pod.metadata.name.clone().unwrap_or_default() })
                                 .collect::<Vec<String>>()
                                 .join(",")
                         );
                     }
-                }
+                },
             }
         }
 
-        // Associate if claimed
-        if status.claim.is_some() && !eip.attached() {
+        // TODO (jubrad)
+        // This code should handle migration to claims
+        // a bit more elegantly, it can be removed after all
+        // eips are using claims.
+        // We want to avoid disassociate/reassociate
+        // in the case that an eip prior to the introduction
+        // of claims is correctly associated without a claim
+        let mut correctly_associated_but_originally_unclaimed: bool = false;
+        if eip.attached() && originally_unclaimed && status.claim.is_some() {
             let claim = status.claim.clone().unwrap();
+            correctly_associated_but_originally_unclaimed = match &eip.spec.selector {
+                EipSelector::Node { selector: _ } => {
+                    status.private_ip_address.as_ref().map(|ip| ip.as_str())
+                        == node_api
+                            .get_opt(&claim)
+                            .await?
+                            .ok_or(Error::MissingNode)?
+                            .ip()
+                }
+                EipSelector::Pod { pod_name: _ } => {
+                    status.private_ip_address.as_ref().map(|ip| ip.as_str())
+                        == pod_api
+                            .get_opt(&claim)
+                            .await?
+                            .ok_or(Error::MissingPod)?
+                            .ip()
+                }
+            };
+        };
+
+        // Disassociaate if conditions are met
+        if eip.attached()
+            && (status.claim.is_none()
+                || (selector_or_resource_changed_claim
+                    && !correctly_associated_but_originally_unclaimed))
+        {
+            info!("Disassociating EIP! {}", name);
+            let association_id = eip.association_id(&self.ec2_client).await?;
+            if let Some(id) = association_id {
+                crate::aws::disassociate_eip(&self.ec2_client, &id).await?;
+            } else {
+                info!("EIP {} was already disassociated", name);
+            }
+            status.eni = None;
+            status.private_ip_address = None;
+        }
+
+        // Associate if claimed and not attached
+        if status.claim.is_some() && !eip.attached() {
+            info!("Associating EIP! {}", name);
+            let claim = status.claim.clone().unwrap();
+            // find the node and ip to associate
             let (node, ip) = match &eip.spec.selector {
                 EipSelector::Node { selector: _ } => {
                     let node = node_api.get_opt(&claim).await?.ok_or(Error::MissingNode)?;
@@ -202,13 +294,27 @@ impl k8s_controller::Context for Context {
                 }
                 EipSelector::Pod { pod_name: _ } => {
                     let pod = pod_api.get_opt(&claim).await?.ok_or(Error::MissingPod)?;
-                    let node_name = pod.node_name().ok_or(Error::MissingNodeName)?;
+                    let node_name = pod.node_name();
+                    if node_name.is_none() {
+                        warn!(
+                            "Pod {} does not yet have a node assigned- Rescheduling",
+                            pod.metadata.name.ok_or(Error::MissingPodName)?
+                        );
+                        return Ok(Some(Action::requeue(Duration::from_secs(1))));
+                    }
                     let node = node_api
-                        .get_opt(node_name)
+                        .get_opt(node_name.unwrap())
                         .await?
                         .ok_or(Error::MissingNode)?;
-                    let pod_ip = pod.ip().ok_or(Error::MissingPodIp)?;
-                    (node, pod_ip.to_owned())
+                    let pod_ip = pod.ip();
+                    if pod_ip.is_none() {
+                        warn!(
+                            "Pod {} does not have a ip assigned - Rescheduling",
+                            pod.metadata.name.ok_or(Error::MissingPodName)?
+                        );
+                        return Ok(Some(Action::requeue(Duration::from_secs(1))));
+                    }
+                    (node, pod_ip.unwrap().to_owned())
                 }
             };
             // attach to node
@@ -230,6 +336,7 @@ impl k8s_controller::Context for Context {
             status.private_ip_address = Some(ip.to_owned());
         }
 
+        // Ensure status is up-to-date
         if eip.status != Some(status.clone()) {
             crate::eip::update_status(&eip_api, name, &status).await?;
         }

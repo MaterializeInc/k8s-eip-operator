@@ -63,6 +63,7 @@ pub mod v1 {
 }
 
 pub mod v2 {
+    use aws_sdk_ec2::Client as Ec2Client;
     use k8s_openapi::api::core::v1::{Node, Pod};
     use kube::api::Api;
     use kube::{Client, CustomResource, Resource};
@@ -151,10 +152,30 @@ pub mod v2 {
                 .map_or(false, |status| status.private_ip_address.is_some())
         }
 
+        pub fn selects_with_pod(&self) -> bool {
+            matches!(self.spec.selector, EipSelector::Pod { pod_name: _ })
+        }
+
+        pub fn selects_with_node(&self) -> bool {
+            matches!(self.spec.selector, EipSelector::Node { selector: _ })
+        }
+
         pub fn claimed(&self) -> bool {
             self.status
                 .as_ref()
                 .map_or(false, |status| status.claim.is_some())
+        }
+
+        pub fn claim(&self) -> Option<&str> {
+            self.status.as_ref().map_or(None, |s| {
+                s.claim.as_ref().map_or(None, |c| Some(c.as_str()))
+            })
+        }
+
+        pub fn claimed_by(&self, name: &str) -> bool {
+            self.status.as_ref().map_or(false, |status| {
+                status.claim.as_ref().is_some_and(|c| c == name)
+            })
         }
 
         pub fn matches_pod(&self, pod: &Pod) -> bool {
@@ -205,6 +226,31 @@ pub mod v2 {
             self.status
                 .as_ref()
                 .and_then(|status| status.allocation_id.as_deref())
+        }
+
+        pub async fn association_id(
+            &self,
+            ec2_client: &Ec2Client,
+        ) -> Result<Option<String>, Error> {
+            let addresses = crate::aws::describe_addresses_with_tag_value(
+                ec2_client,
+                crate::aws::EIP_UID_TAG,
+                self.metadata
+                    .uid
+                    .as_ref()
+                    .ok_or(Error::MissingEipUid)?
+                    .as_str(),
+            )
+            .await?
+            .addresses;
+            match addresses {
+                None => return Ok(None),
+                Some(addrs) => match addrs.len() {
+                    0 => return Ok(None),
+                    1 => return Ok(addrs[0].association_id().map(|id| id.to_owned())),
+                    _ => return Err(Error::MultipleAddressesAssociatedToEip),
+                },
+            }
         }
     }
 
@@ -353,54 +399,6 @@ pub(crate) async fn set_status_created(
     let result = api.patch_status(name, &params, &patch).await;
     if result.is_ok() {
         event!(Level::INFO, "Done updating status for created EIP.");
-    }
-    result
-}
-
-/// Sets the eni and privateIpAddress fields in the Eip status.
-#[instrument(skip(api), err)]
-pub(crate) async fn set_status_attached(
-    api: &Api<Eip>,
-    name: &str,
-    eni: &str,
-    private_ip_address: &str,
-) -> Result<Eip, kube::Error> {
-    event!(Level::INFO, "Updating status for attached EIP.");
-    let patch = serde_json::json!({
-        "apiVersion": Eip::version(),
-        "kind": "Eip",
-        "status": {
-            "eni": eni,
-            "privateIpAddress": private_ip_address,
-        }
-    });
-    let patch = Patch::Merge(&patch);
-    let params = PatchParams::default();
-    let result = api.patch_status(name, &params, &patch).await;
-    if result.is_ok() {
-        event!(Level::INFO, "Done updating status for attached EIP.");
-    }
-    result
-}
-
-/// Unsets the eni and privateIpAddress and claim fields in the Eip status.
-#[instrument(skip(api), err)]
-pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Eip, kube::Error> {
-    event!(Level::INFO, "Updating status for detached EIP.");
-    let patch = serde_json::json!({
-        "apiVersion": Eip::version(),
-        "kind": "Eip",
-        "status": {
-            "eni": None::<String>,
-            "privateIpAddress": None::<String>,
-            "claim": None::<String>,
-        }
-    });
-    let patch = Patch::Merge(&patch);
-    let params = PatchParams::default();
-    let result = api.patch_status(name, &params, &patch).await;
-    if result.is_ok() {
-        event!(Level::INFO, "Done updating status for detached EIP.");
     }
     result
 }

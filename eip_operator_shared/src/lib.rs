@@ -53,10 +53,14 @@ pub enum Error {
     NoEipResourceWithThatNodeSelector,
     #[error("EIP does not have a status.")]
     MissingEipStatus,
+    #[error("EIP does not have a a claim, when one was expected.")]
+    MissingEipClaim,
     #[error("EIP does not have a UID in its metadata.")]
     MissingEipUid,
     #[error("EIP does not have a name in its metadata.")]
     MissingEipName,
+    #[error("EIP expected to have association_id but none found.")]
+    MissingAssociationId,
     #[error("Pod not found.")]
     MissingPod,
     #[error("Pod does not have a UID in its metadata.")]
@@ -79,6 +83,8 @@ pub enum Error {
     MalformedProviderId,
     #[error("Multiple elastic IPs are tagged with this pod's UID.")]
     MultipleEipsTaggedForPod,
+    #[error("Multiple Addresses are associated with the eip")]
+    MultipleAddressesAssociatedToEip,
     #[error("allocation_id was None.")]
     MissingAllocationId,
     #[error("public_ip was None.")]
@@ -116,7 +122,7 @@ pub enum Error {
     #[error("AWS disassociate_address reported error: {source}")]
     AwsDisassociateAddress {
         #[from]
-        source: SdkError<DisassociateAddressError>,
+        source: DisassociateAddressError,
     },
     #[error("AWS release_address reported error: {source}")]
     AwsReleaseAddress {

@@ -2,7 +2,7 @@ use k8s_openapi::api::core::v1::Pod;
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
-use tracing::{event, instrument, Level};
+use tracing::{event, info, instrument, Level};
 
 use eip_operator_shared::Error;
 
@@ -42,21 +42,41 @@ impl k8s_controller::Context for Context {
             crate::eip::create_for_pod(&eip_api, name).await?;
         }
 
-        let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips
+        // Find an eip to claim
+        let eip = eip_api
+            .list(&ListParams::default())
+            .await?
+            .items
             .into_iter()
             .find(|eip| eip.matches_pod(pod))
             .ok_or_else(|| Error::NoEipResourceWithThatPodName(name.to_owned()))?;
         let eip_name = eip.name().ok_or(Error::MissingEipName)?;
-        crate::eip::set_status_claimed(&eip_api, eip_name, name).await?;
-        let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
-        let eip_description = crate::aws::describe_address(&self.ec2_client, allocation_id)
-            .await?
-            .addresses
-            .ok_or(Error::MissingAddresses)?
-            .swap_remove(0);
-        let public_ip = eip_description.public_ip.ok_or(Error::MissingPublicIp)?;
-        add_dns_target_annotation(&pod_api, name, &public_ip, allocation_id).await?;
+
+        // Claim it if unclaimed
+        let mut claimed_here = false;
+        if !eip.claimed() {
+            crate::eip::set_status_claimed(&eip_api, eip_name, name).await?;
+            claimed_here = true;
+        }
+        // Setup if claimed, otherwise log
+        if eip.claimed_by(name) || claimed_here {
+            let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
+            let eip_description = crate::aws::describe_address(&self.ec2_client, allocation_id)
+                .await?
+                .addresses
+                .ok_or(Error::MissingAddresses)?
+                .swap_remove(0);
+            let public_ip = eip_description.public_ip.ok_or(Error::MissingPublicIp)?;
+            add_dns_target_annotation(&pod_api, name, &public_ip, allocation_id).await?;
+        } else {
+            info!(
+                "EIP {} found for pod {} but already claimed by {}",
+                eip_name,
+                name,
+                eip.claim().ok_or(Error::MissingEipClaim)?
+            );
+        }
+
         Ok(None)
     }
 
@@ -69,13 +89,18 @@ impl k8s_controller::Context for Context {
         // remove claim, delete if autocreate
         let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
-        let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips.into_iter().find(|eip| eip.matches_pod(pod));
+        let eip = eip_api
+            .list(&ListParams::default())
+            .await?
+            .items
+            .into_iter()
+            .find(|eip| eip.claimed_by(name));
         if should_autocreate_eip(pod) && eip.is_some() {
             event!(Level::INFO, should_autocreate_eip = true);
             crate::eip::delete(&eip_api, eip.unwrap().name().ok_or(Error::MissingEipName)?).await?;
-        } else {
-            crate::eip::set_status_detached(&eip_api, name).await?;
+        } else if let Some(eip) = eip {
+            crate::eip::set_status_unclaimed(&eip_api, eip.name().ok_or(Error::MissingEipName)?)
+                .await?;
         };
         Ok(None)
     }

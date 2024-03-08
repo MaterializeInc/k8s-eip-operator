@@ -32,33 +32,44 @@ impl k8s_controller::Context for Context {
         client: Client,
         node: &Self::Resource,
     ) -> Result<Option<Action>, Self::Error> {
-        // Find an EIP and claim if not claimed
         let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
         event!(Level::INFO, name = %name, "Applying node.");
         let eip_api = Api::<Eip>::namespaced(
             client.clone(),
             self.namespace.as_deref().unwrap_or("default"),
         );
+        // Find an EIP and claim if not claimed
         let node_labels = node.labels().ok_or(Error::MissingNodeLabels)?;
-        let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips
+        let eip = eip_api
+            .list(&ListParams::default())
+            .await?
+            .items
             .into_iter()
             .find(|eip| eip.matches_node_labels(node_labels) && eip.status.is_some())
             .ok_or(Error::NoEipResourceWithThatNodeSelector)?;
-        // do nothing if eip already claimed
         let eip_name = eip.name().ok_or(Error::MissingEipName)?;
-        if eip.claimed() {
-            info!(
-                "Found claimed ip {} matching node {}, skipping",
-                eip_name, name,
-            );
+
+        // Claim it if unclaimed
+        if !eip.claimed() {
+            let _allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
+            crate::eip::set_status_claimed(&eip_api, eip_name, name).await?;
+            Ok(None)
+        } else {
+            if eip.claimed_by(name) {
+                info!(
+                    "Found EIP {} already appropriately claimed by node {}",
+                    eip_name, name,
+                );
+            } else {
+                info!(
+                    "Found EIP {} matching node {}, but claimed by {}",
+                    eip_name,
+                    name,
+                    eip.claim().ok_or(Error::MissingEipClaim)?
+                );
+            }
             return Ok(None);
-        };
-        let eip_name = eip.name().ok_or(Error::MissingEipName)?;
-        // ensure there's an allocation id before claiming
-        let _allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
-        crate::eip::set_status_claimed(&eip_api, eip_name, name).await?;
-        Ok(None)
+        }
     }
 
     #[instrument(skip(self, client, node), err)]
@@ -67,19 +78,21 @@ impl k8s_controller::Context for Context {
         client: Client,
         node: &Self::Resource,
     ) -> Result<Option<Action>, Self::Error> {
-        // remove claim
+        // remove claim if one exists
+        let name = node.metadata.name.as_ref().ok_or(Error::MissingNodeName)?;
         let eip_api = Api::<Eip>::namespaced(
             client.clone(),
             self.namespace.as_deref().unwrap_or("default"),
         );
-        let node_labels = node.labels().ok_or(Error::MissingNodeLabels)?;
-        let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips
+        let eip = eip_api
+            .list(&ListParams::default())
+            .await?
+            .items
             .into_iter()
             .filter(|eip| eip.attached())
-            .find(|eip| eip.matches_node_labels(node_labels));
+            .find(|eip| eip.claimed_by(name));
         if let Some(eip) = eip {
-            crate::eip::set_status_detached(&eip_api, eip.name().ok_or(Error::MissingEipName)?)
+            crate::eip::set_status_unclaimed(&eip_api, eip.name().ok_or(Error::MissingEipName)?)
                 .await?;
         }
         Ok(None)
