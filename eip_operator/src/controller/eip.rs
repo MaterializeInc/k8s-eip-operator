@@ -246,7 +246,7 @@ impl k8s_controller::Context for Context {
             let claim = status.claim.clone().unwrap();
             correctly_associated_but_originally_unclaimed = match &eip.spec.selector {
                 EipSelector::Node { selector: _ } => {
-                    status.private_ip_address.as_ref().map(|ip| ip.as_str())
+                    status.private_ip_address.as_deref()
                         == node_api
                             .get_opt(&claim)
                             .await?
@@ -254,7 +254,7 @@ impl k8s_controller::Context for Context {
                             .ip()
                 }
                 EipSelector::Pod { pod_name: _ } => {
-                    status.private_ip_address.as_ref().map(|ip| ip.as_str())
+                    status.private_ip_address.as_deref()
                         == pod_api
                             .get_opt(&claim)
                             .await?

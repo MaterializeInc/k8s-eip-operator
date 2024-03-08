@@ -167,9 +167,7 @@ pub mod v2 {
         }
 
         pub fn claim(&self) -> Option<&str> {
-            self.status.as_ref().map_or(None, |s| {
-                s.claim.as_ref().map_or(None, |c| Some(c.as_str()))
-            })
+            self.status.as_ref().and_then(|s| s.claim.as_deref())
         }
 
         pub fn claimed_by(&self, name: &str) -> bool {
@@ -244,11 +242,11 @@ pub mod v2 {
             .await?
             .addresses;
             match addresses {
-                None => return Ok(None),
+                None => Ok(None),
                 Some(addrs) => match addrs.len() {
-                    0 => return Ok(None),
+                    0 => Ok(None),
                     1 => return Ok(addrs[0].association_id().map(|id| id.to_owned())),
-                    _ => return Err(Error::MultipleAddressesAssociatedToEip),
+                    _ => Err(Error::MultipleAddressesAssociatedToEip),
                 },
             }
         }
