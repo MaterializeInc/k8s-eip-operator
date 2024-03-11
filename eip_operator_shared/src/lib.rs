@@ -4,6 +4,7 @@ use std::net::AddrParseError;
 use std::str::FromStr;
 use std::time::Duration;
 
+use aws_config::{BehaviorVersion, ConfigLoader};
 use aws_sdk_ec2::error::SdkError;
 use aws_sdk_ec2::operation::allocate_address::AllocateAddressError;
 use aws_sdk_ec2::operation::associate_address::AssociateAddressError;
@@ -13,12 +14,14 @@ use aws_sdk_ec2::operation::disassociate_address::DisassociateAddressError;
 use aws_sdk_ec2::operation::release_address::ReleaseAddressError;
 use aws_sdk_servicequotas::error::SdkError as ServiceQuotaSdkError;
 use aws_sdk_servicequotas::operation::get_service_quota::GetServiceQuotaError;
+use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
+
 use futures::Future;
 use hyper::client::HttpConnector;
 use hyper_tls::HttpsConnector;
-use opentelemetry::sdk::trace::{Config, Sampler};
-use opentelemetry::sdk::Resource as OtelResource;
 use opentelemetry::KeyValue;
+use opentelemetry_sdk::trace::{Config, Sampler};
+use opentelemetry_sdk::Resource as OtelResource;
 use tokio::time::error::Elapsed;
 use tonic::metadata::{MetadataKey, MetadataMap};
 use tonic::transport::Endpoint;
@@ -73,8 +76,14 @@ pub enum Error {
     MissingNode,
     #[error("Node does not have an IP address.")]
     MissingNodeIp,
+    #[error("Node failed to remove EIP.")]
+    NodeFailedToRemoveEip,
+    #[error("Pod failed to remove EIP.")]
+    PodFailedToRemoveEip,
     #[error("Pod does not have a node name in its spec.")]
     MissingNodeName,
+    #[error("Pod does not yet have a node name.")]
+    MissingPodNodeName,
     #[error("Node does not have labels.")]
     MissingNodeLabels,
     #[error("Node does not have a provider_id in its spec.")]
@@ -89,6 +98,8 @@ pub enum Error {
     MissingAllocationId,
     #[error("public_ip was None.")]
     MissingPublicIp,
+    #[error("Missing expected private_ip.")]
+    MissingPrivateIp,
     #[error("DescribeInstancesResult.reservations was None.")]
     MissingReservations,
     #[error("DescribeInstancesResult.reservations[0].instances was None.")]
@@ -264,7 +275,7 @@ where
                         ))
                         .with_resource(otr),
                 )
-                .install_batch(opentelemetry::runtime::Tokio)
+                .install_batch(opentelemetry_sdk::runtime::Tokio)
                 .unwrap();
             let otel_layer = tracing_opentelemetry::layer()
                 .with_tracer(tracer)
@@ -285,4 +296,9 @@ where
         }
     };
     f().await
+}
+
+pub fn aws_config_loader_default() -> ConfigLoader {
+    aws_config::defaults(BehaviorVersion::latest())
+        .http_client(HyperClientBuilder::new().build(HttpsConnector::new()))
 }

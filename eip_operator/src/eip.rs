@@ -5,6 +5,7 @@ use kube::{Client, CustomResourceExt};
 use kube_runtime::wait::{await_condition, conditions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{event, info, instrument, Level};
 
 use eip_operator_shared::Error;
@@ -72,6 +73,8 @@ pub mod v2 {
     use std::collections::BTreeMap;
 
     use eip_operator_shared::Error;
+
+    use crate::kube_ext::NodeExt;
 
     use super::EipStatus;
 
@@ -152,36 +155,41 @@ pub mod v2 {
                 .map_or(false, |status| status.private_ip_address.is_some())
         }
 
-        pub fn selects_with_pod(&self) -> bool {
-            matches!(self.spec.selector, EipSelector::Pod { pod_name: _ })
-        }
-
-        pub fn selects_with_node(&self) -> bool {
-            matches!(self.spec.selector, EipSelector::Node { selector: _ })
-        }
-
-        pub fn claimed(&self) -> bool {
-            self.status
-                .as_ref()
-                .map_or(false, |status| status.claim.is_some())
-        }
-
-        pub fn claim(&self) -> Option<&str> {
-            self.status.as_ref().and_then(|s| s.claim.as_deref())
-        }
-
-        pub fn claimed_by(&self, name: &str) -> bool {
-            self.status.as_ref().map_or(false, |status| {
-                status.claim.as_ref().is_some_and(|c| c == name)
-            })
-        }
-
-        pub fn matches_pod(&self, pod: &Pod) -> bool {
-            if pod.metadata.name.is_some() {
-                self.matches_pod_name(pod.metadata.name.as_ref().unwrap())
-            } else {
-                false
+        pub fn associated_with_pod(&self, pod: &Pod) -> bool {
+            if !self.attached() {
+                return false;
             }
+            let eip_private_ip = self
+                .status
+                .as_ref()
+                .map(|s| s.private_ip_address.as_ref())
+                .unwrap_or(None);
+            if let Some(pod_status) = &pod.status {
+                return eip_private_ip == pod_status.pod_ip.as_ref();
+            }
+            false
+        }
+
+        pub fn associated_with_node(&self, node: &Node) -> bool {
+            if !self.attached() {
+                return false;
+            }
+            let eip_private_ip = self
+                .status
+                .as_ref()
+                .map(|s| s.private_ip_address.as_ref())
+                .unwrap_or(None);
+            if let Some(node_status) = &node.status {
+                if let Some(addresses) = &node_status.addresses {
+                    if addresses
+                        .iter()
+                        .any(|a| a.type_ == "InternalIP" && Some(&a.address) == eip_private_ip)
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
         }
 
         pub fn matches_pod_name(&self, pod_name: &str) -> bool {
@@ -190,14 +198,6 @@ pub mod v2 {
                     pod_name: ref this_pod_name,
                 } => pod_name == this_pod_name,
                 _ => false,
-            }
-        }
-
-        pub fn matches_node(&self, node: &Node) -> bool {
-            if let Some(labels) = node.metadata.labels.clone() {
-                self.matches_node_labels(&labels)
-            } else {
-                false
             }
         }
 
@@ -226,29 +226,31 @@ pub mod v2 {
                 .and_then(|status| status.allocation_id.as_deref())
         }
 
-        pub async fn association_id(
+        pub async fn associate_with_node_and_ip(
             &self,
             ec2_client: &Ec2Client,
-        ) -> Result<Option<String>, Error> {
-            let addresses = crate::aws::describe_addresses_with_tag_value(
-                ec2_client,
-                crate::aws::EIP_UID_TAG,
-                self.metadata
-                    .uid
-                    .as_ref()
-                    .ok_or(Error::MissingEipUid)?
-                    .as_str(),
-            )
-            .await?
-            .addresses;
-            match addresses {
-                None => Ok(None),
-                Some(addrs) => match addrs.len() {
-                    0 => Ok(None),
-                    1 => return Ok(addrs[0].association_id().map(|id| id.to_owned())),
-                    _ => Err(Error::MultipleAddressesAssociatedToEip),
-                },
-            }
+            node: &Node,
+            ip: &str,
+        ) -> Result<String, Error> {
+            // attach to node
+            let provider_id = node.provider_id().ok_or(Error::MissingProviderId)?;
+            let instance_id = provider_id
+                .rsplit_once('/')
+                .ok_or(Error::MalformedProviderId)?
+                .1;
+            let instance_description =
+                crate::aws::describe_instance(ec2_client, instance_id).await?;
+            let allocation_id = self
+                .status
+                .as_ref()
+                .ok_or(Error::MissingEipStatus)?
+                .allocation_id
+                .clone()
+                .ok_or(Error::MissingAllocationId)?;
+            let eni_id = crate::aws::get_eni_from_private_ip(&instance_description, ip)
+                .ok_or(Error::NoInterfaceWithThatIp)?;
+            crate::aws::associate_eip(ec2_client, &allocation_id, &eni_id, ip).await?;
+            Ok(eni_id)
         }
     }
 
@@ -283,7 +285,7 @@ pub struct EipStatus {
     pub public_ip_address: Option<String>,
     pub eni: Option<String>,
     pub private_ip_address: Option<String>,
-    pub claim: Option<String>,
+    pub refresh_request_ts: Option<String>,
 }
 
 /// Registers the Eip custom resource with Kubernetes,
@@ -401,46 +403,30 @@ pub(crate) async fn set_status_created(
     result
 }
 
-/// Sets the status to claimed for an eip
+/// Updates a ts status options forcing reconciliation
 #[instrument(skip(api), err)]
-pub(crate) async fn set_status_claimed(
-    api: &Api<Eip>,
-    name: &str,
-    claim: &str,
-) -> Result<Eip, kube::Error> {
-    event!(Level::INFO, "Updating status claimed for EIP.");
+pub(crate) async fn trigger_reconciliation(api: &Api<Eip>, name: &str) -> Result<Eip, kube::Error> {
+    event!(
+        Level::INFO,
+        "Updating status reconciliation_requested_ts for EIP {}.",
+        name
+    );
     let patch = serde_json::json!({
         "apiVersion": Eip::version(),
         "kind": "Eip",
         "status": {
-            "claim": claim,
+            "refreshRequestTs": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs().to_string()
         }
     });
     let patch = Patch::Merge(&patch);
     let params = PatchParams::default();
     let result = api.patch_status(name, &params, &patch).await;
     if result.is_ok() {
-        event!(Level::INFO, "Done updating status claimed for EIP.");
-    }
-    result
-}
-
-/// Sets the status to unclaimed for an eip
-#[instrument(skip(api), err)]
-pub(crate) async fn set_status_unclaimed(api: &Api<Eip>, name: &str) -> Result<Eip, kube::Error> {
-    event!(Level::INFO, "Updating status for EIP to unclaimed.");
-    let patch = serde_json::json!({
-        "apiVersion": Eip::version(),
-        "kind": "Eip",
-        "status": {
-            "claim": None::<String>,
-        }
-    });
-    let patch = Patch::Merge(&patch);
-    let params = PatchParams::default();
-    let result = api.patch_status(name, &params, &patch).await;
-    if result.is_ok() {
-        event!(Level::INFO, "Done updating status unclaimed for EIP.");
+        event!(
+            Level::INFO,
+            "Done updating status reconciliation_requested_ts for EIP {}.",
+            name
+        );
     }
     result
 }
