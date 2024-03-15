@@ -71,7 +71,6 @@ impl k8s_controller::Context for Context {
             .into_iter()
             .find(|eip| eip.matches_pod(name))
             .ok_or_else(|| Error::NoEipResourceWithThatPodName(name.to_owned()))?;
-        let eip_name = eip.name().ok_or(Error::MissingEipName)?;
         let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
         let eip_description = crate::aws::describe_address(&self.ec2_client, allocation_id)
             .await?
@@ -82,10 +81,10 @@ impl k8s_controller::Context for Context {
         if eip_description.network_interface_id != Some(eni_id.to_owned())
             || eip_description.private_ip_address != Some(pod_ip.to_owned())
         {
+            crate::eip::set_status_attached(&eip_api, &eip, &eni_id, pod_ip, name).await?;
             crate::aws::associate_eip(&self.ec2_client, allocation_id, &eni_id, pod_ip).await?;
+            add_dns_target_annotation(&pod_api, name, &public_ip, allocation_id).await?;
         }
-        crate::eip::set_status_attached(&eip_api, eip_name, &eni_id, pod_ip).await?;
-        add_dns_target_annotation(&pod_api, name, &public_ip, allocation_id).await?;
         Ok(None)
     }
 

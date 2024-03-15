@@ -1,7 +1,7 @@
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::api::{Api, DeleteParams, ListParams, Patch, PatchParams, PostParams};
 use kube::core::crd::merge_crds;
-use kube::{Client, CustomResourceExt};
+use kube::{Client, CustomResourceExt, ResourceExt};
 use kube_runtime::wait::{await_condition, conditions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,10 @@ pub mod v1 {
 }
 
 pub mod v2 {
-    use kube::api::Api;
+    use k8s_openapi::api::core::v1::{Node, Pod};
+    use kube::api::{Api, ListParams};
+    use kube::core::{DynamicObject, GroupVersionKind};
+    use kube::discovery::ApiResource;
     use kube::{Client, CustomResource, Resource};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -121,7 +124,8 @@ pub mod v2 {
         printcolumn = r#"{"name": "PublicIP", "type": "string", "description": "Public IP address of the EIP.", "jsonPath": ".status.publicIpAddress"}"#,
         printcolumn = r#"{"name": "Selector", "type": "string", "description": "Selector for the pod or node to associate the EIP with.", "jsonPath": ".spec.selector", "priority": 1}"#,
         printcolumn = r#"{"name": "ENI", "type": "string", "description": "ID of the Elastic Network Interface of the pod.", "jsonPath": ".status.eni", "priority": 1}"#,
-        printcolumn = r#"{"name": "PrivateIP", "type": "string", "description": "Private IP address of the pod.", "jsonPath": ".status.privateIpAddress", "priority": 1}"#
+        printcolumn = r#"{"name": "PrivateIP", "type": "string", "description": "Private IP address of the pod.", "jsonPath": ".status.privateIpAddress", "priority": 1}"#,
+        printcolumn = r#"{"name": "ResourceId", "type": "string", "description": "ID of resource the EIP is attached to..", "jsonPath": ".status.resourceId", "priority": 1}"#
     )]
     pub struct EipSpec {
         pub selector: EipSelector,
@@ -173,6 +177,51 @@ pub mod v2 {
                 _ => false,
             }
         }
+        pub fn get_resource_api(&self, client: &Client) -> Api<DynamicObject> {
+            match self.spec.selector {
+                EipSelector::Pod { pod_name: _ } => {
+                    let gvk = GroupVersionKind::gvk(
+                        Pod::group(&()).as_ref(),
+                        Pod::version(&()).as_ref(),
+                        Pod::kind(&()).as_ref(),
+                    );
+                    let api_resource = ApiResource::from_gvk(&gvk);
+                    // Api::namespaced(client, &self.namespace().unwrap())
+                    Api::default_namespaced_with(client.clone(), &api_resource)
+                }
+                EipSelector::Node { selector: _ } => {
+                    let gvk = GroupVersionKind::gvk(
+                        Node::group(&()).as_ref(),
+                        Node::version(&()).as_ref(),
+                        Node::kind(&()).as_ref(),
+                    );
+                    let api_resource = ApiResource::from_gvk(&gvk);
+                    // Api::namespaced(client, &self.namespace().unwrap())
+                    Api::all_with(client.clone(), &api_resource)
+                    // Api::all(client),
+                }
+            }
+        }
+
+        pub fn get_resource_list_params(&self) -> ListParams {
+            match self.spec.selector {
+                EipSelector::Pod { ref pod_name } => ListParams {
+                    field_selector: Some(format!("metadata.name={}", pod_name)),
+                    ..Default::default()
+                },
+                EipSelector::Node { ref selector } => {
+                    let label_selector = selector
+                        .iter()
+                        .map(|(k, v)| format!("{}={}", k, v))
+                        .collect::<Vec<String>>()
+                        .join(",");
+                    ListParams {
+                        label_selector: Some(label_selector),
+                        ..Default::default()
+                    }
+                }
+            }
+        }
 
         pub fn allocation_id(&self) -> Option<&str> {
             self.status
@@ -205,13 +254,14 @@ pub mod v2 {
 }
 
 /// The status fields for the Eip Kubernetes custom resource.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EipStatus {
     pub allocation_id: Option<String>,
     pub public_ip_address: Option<String>,
     pub eni: Option<String>,
     pub private_ip_address: Option<String>,
+    pub resource_id: Option<String>,
 }
 
 /// Registers the Eip custom resource with Kubernetes,
@@ -335,26 +385,27 @@ pub(crate) async fn set_status_created(
 #[instrument(skip(api), err)]
 pub(crate) async fn set_status_attached(
     api: &Api<Eip>,
-    name: &str,
+    eip: &Eip,
     eni: &str,
     private_ip_address: &str,
-) -> Result<Eip, kube::Error> {
+    resource_id: &str,
+) -> Result<Eip, Error> {
     event!(Level::INFO, "Updating status for attached EIP.");
-    let patch = serde_json::json!({
-        "apiVersion": Eip::version(),
-        "kind": "Eip",
-        "status": {
-            "eni": eni,
-            "privateIpAddress": private_ip_address,
-        }
-    });
-    let patch = Patch::Merge(&patch);
-    let params = PatchParams::default();
-    let result = api.patch_status(name, &params, &patch).await;
-    if result.is_ok() {
-        event!(Level::INFO, "Done updating status for attached EIP.");
-    }
-    result
+    let mut eip = eip.clone();
+    let status = eip.status.as_mut().ok_or(Error::MissingEipStatus)?;
+    status.eni = Some(eni.to_owned());
+    status.private_ip_address = Some(private_ip_address.to_owned());
+    status.resource_id = Some(resource_id.to_owned());
+    let result = api
+        .replace_status(
+            &eip.name_unchecked(),
+            &PostParams::default(),
+            serde_json::to_vec(&eip.clone())?,
+        )
+        .await?;
+    // let result = api.patch_status(name, &params, &patch).await;
+    event!(Level::INFO, "Done updating status for attached EIP.");
+    Ok(result)
 }
 
 /// Unsets the eni and privateIpAddress fields in the Eip status.
@@ -367,6 +418,7 @@ pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Ei
         "status": {
             "eni": None::<String>,
             "privateIpAddress": None::<String>,
+            "resourceId": None::<String>,
         }
     });
     let patch = Patch::Merge(&patch);

@@ -1,3 +1,4 @@
+[graph]
 targets = [
     { triple = "aarch64-apple-darwin" },
     { triple = "aarch64-unknown-linux-gnu" },
@@ -6,7 +7,7 @@ targets = [
 ]
 
 [advisories]
-vulnerability = "deny"
+version = 2
 
 [bans]
 multiple-versions = "deny"
@@ -20,9 +21,9 @@ skip = [
     { name = "hashbrown", version = "0.12.3" },
     { name = "hashbrown", version = "0.14.0" },
     { name = "nix", version = "0.26.4" },
-    { name = "nix", version = "0.27.1" },
     { name = "ordered-float", version = "2.10.0" },
-    { name = "ordered-float", version = "3.4.0" },
+    { name = "fastrand", version = "2.0.1" },
+    { name = "regex-syntax", version = "0.6.29" },
 ]
 
 # Use `tracing` instead.
@@ -35,6 +36,7 @@ name = "env_logger"
 name = "rustls"
 
 [licenses]
+version = 2
 allow = [
     "Apache-2.0",
     "BSD-2-Clause",
@@ -42,7 +44,6 @@ allow = [
     "MIT",
     "Unicode-DFS-2016",
 ]
-copyleft = "deny"
 
 [[licenses.clarify]]
 name = "ring"

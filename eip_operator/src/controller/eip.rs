@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use kube::api::Api;
+use kube::api::{Api, PatchParams};
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use eip_operator_shared::Error;
 
@@ -42,7 +43,7 @@ impl k8s_controller::Context for Context {
         client: Client,
         eip: &Self::Resource,
     ) -> Result<Option<Action>, Self::Error> {
-        let eip_api = Api::namespaced(client, &eip.namespace().unwrap());
+        let eip_api = Api::namespaced(client.clone(), &eip.namespace().unwrap());
 
         let uid = eip.metadata.uid.as_ref().ok_or(Error::MissingEipUid)?;
         let name = eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
@@ -87,6 +88,42 @@ impl k8s_controller::Context for Context {
             }
         };
         crate::eip::set_status_created(&eip_api, name, &allocation_id, &public_ip).await?;
+
+        if eip.status.as_ref().is_some_and(|s| s.resource_id.is_some()) {
+            // do nothing
+        } else {
+            let resource_api = eip.get_resource_api(&client);
+            let matched_resources = resource_api
+                .list(&eip.get_resource_list_params())
+                .await?
+                .items;
+            info!(
+                "Eip apply for {} Found matched {} resources",
+                name,
+                matched_resources.len()
+            );
+            for resource in matched_resources {
+                info!(
+                    "Updating eip refresh label for {}",
+                    resource.name_unchecked()
+                );
+                let data = resource.clone().data(serde_json::json!({
+                    "metadata": {
+                            "labels":{
+                               "eip.materialize.cloud/refresh": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs().to_string()
+                            }
+                    }
+                }));
+                resource_api
+                    .patch_metadata(
+                        &resource.name_unchecked(),
+                        &PatchParams::default(),
+                        &kube::core::params::Patch::Merge(serde_json::json!(data)),
+                    )
+                    .await?;
+            }
+        }
+
         Ok(None)
     }
 
