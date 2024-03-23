@@ -58,12 +58,6 @@ pub enum Error {
     MissingEipStatus,
     #[error("EIP does not have a UID in its metadata.")]
     MissingEipUid,
-    #[error("EIP does not have a name in its metadata.")]
-    MissingEipName,
-    #[error("Pod does not have a UID in its metadata.")]
-    MissingPodUid,
-    #[error("Pod does not have a name in its metadata.")]
-    MissingPodName,
     #[error("Pod does not have an IP address.")]
     MissingPodIp,
     #[error("Node does not have an IP address.")]
@@ -80,6 +74,8 @@ pub enum Error {
     MultipleEipsTaggedForPod,
     #[error("allocation_id was None.")]
     MissingAllocationId,
+    #[error("aassociation_id was None.")]
+    MissingAssociationId,
     #[error("public_ip was None.")]
     MissingPublicIp,
     #[error("DescribeInstancesResult.reservations was None.")]

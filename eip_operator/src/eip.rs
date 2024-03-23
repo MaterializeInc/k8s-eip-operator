@@ -67,7 +67,7 @@ pub mod v2 {
     use kube::api::{Api, ListParams};
     use kube::core::{DynamicObject, GroupVersionKind};
     use kube::discovery::ApiResource;
-    use kube::{Client, CustomResource, Resource};
+    use kube::{Client, CustomResource, Resource, ResourceExt};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
@@ -125,7 +125,8 @@ pub mod v2 {
         printcolumn = r#"{"name": "Selector", "type": "string", "description": "Selector for the pod or node to associate the EIP with.", "jsonPath": ".spec.selector", "priority": 1}"#,
         printcolumn = r#"{"name": "ENI", "type": "string", "description": "ID of the Elastic Network Interface of the pod.", "jsonPath": ".status.eni", "priority": 1}"#,
         printcolumn = r#"{"name": "PrivateIP", "type": "string", "description": "Private IP address of the pod.", "jsonPath": ".status.privateIpAddress", "priority": 1}"#,
-        printcolumn = r#"{"name": "ResourceId", "type": "string", "description": "ID of resource the EIP is attached to..", "jsonPath": ".status.resourceId", "priority": 1}"#
+        printcolumn = r#"{"name": "ResourceId", "type": "string", "description": "ID of resource the EIP is attached to.", "jsonPath": ".status.resourceId", "priority": 1}"#,
+        printcolumn = r#"{"name": "AssociationId", "type": "string", "description": "ID of the association for the attachment.", "jsonPath": ".status.resourceId", "priority": 1}"#
     )]
     pub struct EipSpec {
         pub selector: EipSelector,
@@ -138,10 +139,6 @@ pub mod v2 {
 
         pub(crate) fn api(k8s_client: Client, namespace: Option<&str>) -> Api<Self> {
             Api::<Self>::namespaced(k8s_client, namespace.unwrap_or("default"))
-        }
-
-        pub fn name(&self) -> Option<&str> {
-            self.metadata.name.as_deref()
         }
 
         pub fn attached(&self) -> bool {
@@ -186,8 +183,12 @@ pub mod v2 {
                         Pod::kind(&()).as_ref(),
                     );
                     let api_resource = ApiResource::from_gvk(&gvk);
-                    // Api::namespaced(client, &self.namespace().unwrap())
-                    Api::default_namespaced_with(client.clone(), &api_resource)
+                    Api::namespaced_with(
+                        client.clone(),
+                        // eips are namespaced
+                        &self.namespace().unwrap_or("default".to_owned()),
+                        &api_resource,
+                    )
                 }
                 EipSelector::Node { selector: _ } => {
                     let gvk = GroupVersionKind::gvk(
@@ -196,9 +197,7 @@ pub mod v2 {
                         Node::kind(&()).as_ref(),
                     );
                     let api_resource = ApiResource::from_gvk(&gvk);
-                    // Api::namespaced(client, &self.namespace().unwrap())
                     Api::all_with(client.clone(), &api_resource)
-                    // Api::all(client),
                 }
             }
         }
@@ -235,9 +234,9 @@ pub mod v2 {
 
         fn try_from(eip_v1: &super::v1::LaxEip) -> Result<Self, Self::Error> {
             if let Some(pod_name) = &eip_v1.spec.pod_name {
-                let name = eip_v1.metadata.name.as_ref().ok_or(Error::MissingEipName)?;
+                let name = eip_v1.name_unchecked();
                 let mut eip = Self::new(
-                    name,
+                    &name,
                     EipSpec {
                         selector: EipSelector::Pod {
                             pod_name: pod_name.to_string(),
@@ -262,6 +261,7 @@ pub struct EipStatus {
     pub eni: Option<String>,
     pub private_ip_address: Option<String>,
     pub resource_id: Option<String>,
+    pub association_id: Option<String>,
 }
 
 /// Registers the Eip custom resource with Kubernetes,
@@ -381,6 +381,30 @@ pub(crate) async fn set_status_created(
     result
 }
 
+/// Sets the associationId field in the Eip status.
+#[instrument(skip(api), err)]
+pub(crate) async fn set_status_association_id(
+    api: &Api<v2::Eip>,
+    name: &str,
+    association_id: &str,
+) -> Result<Eip, kube::Error> {
+    event!(Level::INFO, "Updating status for created EIP.");
+    let patch = serde_json::json!({
+        "apiVersion": Eip::version(),
+        "kind": "Eip",
+        "status": {
+            "associationId": association_id,
+        }
+    });
+    let patch = Patch::Merge(&patch);
+    let params = PatchParams::default();
+    let result = api.patch_status(name, &params, &patch).await;
+    if result.is_ok() {
+        event!(Level::INFO, "Done updating status for created EIP.");
+    }
+    result
+}
+
 /// Sets the eni and privateIpAddress fields in the Eip status.
 #[instrument(skip(api), err)]
 pub(crate) async fn set_status_attached(
@@ -419,6 +443,7 @@ pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Ei
             "eni": None::<String>,
             "privateIpAddress": None::<String>,
             "resourceId": None::<String>,
+            "associationId": None::<String>,
         }
     });
     let patch = Patch::Merge(&patch);

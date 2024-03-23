@@ -33,7 +33,7 @@ impl k8s_controller::Context for Context {
         client: Client,
         pod: &Self::Resource,
     ) -> Result<Option<Action>, Self::Error> {
-        let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodName)?;
+        let name = pod.name_unchecked();
 
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
         let pod_api = Api::<Pod>::namespaced(client.clone(), &pod.namespace().unwrap());
@@ -41,7 +41,7 @@ impl k8s_controller::Context for Context {
 
         if should_autocreate_eip(pod) {
             event!(Level::INFO, should_autocreate_eip = true);
-            crate::eip::create_for_pod(&eip_api, name).await?;
+            crate::eip::create_for_pod(&eip_api, &name).await?;
         }
 
         let pod_ip = pod.ip().ok_or(Error::MissingPodIp)?;
@@ -65,12 +65,18 @@ impl k8s_controller::Context for Context {
                     .ok_or(Error::NoInterfaceWithThatIp)?
             }
         };
-
-        let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips
+        let eips = eip_api
+            .list(&ListParams::default())
+            .await?
+            .items
             .into_iter()
-            .find(|eip| eip.matches_pod(name))
-            .ok_or_else(|| Error::NoEipResourceWithThatPodName(name.to_owned()))?;
+            .filter(|eip| eip.matches_pod(&name))
+            .collect::<Vec<_>>();
+        let eip = match eips.len() {
+            0 => return Err(Error::NoEipResourceWithThatPodName(name.clone())),
+            1 => eips[0].clone(),
+            _ => return Err(Error::MultipleEipsTaggedForPod),
+        };
         let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
         let eip_description = crate::aws::describe_address(&self.ec2_client, allocation_id)
             .await?
@@ -78,13 +84,20 @@ impl k8s_controller::Context for Context {
             .ok_or(Error::MissingAddresses)?
             .swap_remove(0);
         let public_ip = eip_description.public_ip.ok_or(Error::MissingPublicIp)?;
+        // having multiple EIPs
+        crate::eip::set_status_attached(&eip_api, &eip, &eni_id, pod_ip, &name).await?;
         if eip_description.network_interface_id != Some(eni_id.to_owned())
             || eip_description.private_ip_address != Some(pod_ip.to_owned())
         {
-            crate::eip::set_status_attached(&eip_api, &eip, &eni_id, pod_ip, name).await?;
-            crate::aws::associate_eip(&self.ec2_client, allocation_id, &eni_id, pod_ip).await?;
-            add_dns_target_annotation(&pod_api, name, &public_ip, allocation_id).await?;
+            let association_id =
+                crate::aws::associate_eip(&self.ec2_client, allocation_id, &eni_id, pod_ip)
+                    .await?
+                    .association_id
+                    .ok_or(Error::MissingAssociationId)?;
+            crate::eip::set_status_association_id(&eip_api, &eip.name_unchecked(), &association_id)
+                .await?;
         }
+        add_dns_target_annotation(&pod_api, &name, &public_ip, allocation_id).await?;
         Ok(None)
     }
 
@@ -94,12 +107,12 @@ impl k8s_controller::Context for Context {
         client: Client,
         pod: &Self::Resource,
     ) -> Result<Option<Action>, Self::Error> {
-        let name = pod.metadata.name.as_ref().ok_or(Error::MissingPodUid)?;
+        let name = pod.name_unchecked();
 
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
 
-        let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips.into_iter().find(|eip| eip.matches_pod(name));
+        let matched_eips = eip_api.list(&ListParams::default()).await?.items;
+        let eip = matched_eips.into_iter().find(|eip| eip.matches_pod(&name));
         if let Some(eip) = eip {
             let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
             let addresses = crate::aws::describe_address(&self.ec2_client, allocation_id)
@@ -111,15 +124,11 @@ impl k8s_controller::Context for Context {
                     crate::aws::disassociate_eip(&self.ec2_client, &association_id).await?;
                 }
             }
-            crate::eip::set_status_detached(
-                &eip_api,
-                eip.metadata.name.as_ref().ok_or(Error::MissingEipName)?,
-            )
-            .await?;
+            crate::eip::set_status_detached(&eip_api, &eip.name_unchecked()).await?;
         };
         if should_autocreate_eip(pod) {
             event!(Level::INFO, should_autocreate_eip = true);
-            crate::eip::delete(&eip_api, name).await?;
+            crate::eip::delete(&eip_api, &name).await?;
         }
         Ok(None)
     }
