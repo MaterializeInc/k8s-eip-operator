@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use kube::api::{Api, PatchParams};
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 use eip_operator_shared::Error;
 
@@ -108,18 +108,26 @@ impl k8s_controller::Context for Context {
                 let data = resource.clone().data(serde_json::json!({
                     "metadata": {
                             "labels":{
-                               "eip.materialize.cloud/refresh":  rand::thread_rng().gen::<u64>(),
+                               "eip.materialize.cloud/refresh":  format!("{}",rand::thread_rng().gen::<u64>()),
 
                             }
                     }
                 }));
-                resource_api
+                if let Err(err) = resource_api
                     .patch_metadata(
                         &resource.name_unchecked(),
                         &PatchParams::default(),
                         &kube::core::params::Patch::Merge(serde_json::json!(data)),
                     )
-                    .await?;
+                    .await
+                {
+                    warn!(
+                        "Failed to patch resource {} refresh label for {}: err {:?}",
+                        resource.name_unchecked(),
+                        name,
+                        err
+                    );
+                };
             }
         }
 

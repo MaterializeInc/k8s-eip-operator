@@ -141,12 +141,6 @@ pub mod v2 {
             Api::<Self>::namespaced(k8s_client, namespace.unwrap_or("default"))
         }
 
-        pub fn attached(&self) -> bool {
-            self.status
-                .as_ref()
-                .map_or(false, |status| status.private_ip_address.is_some())
-        }
-
         pub fn matches_pod(&self, pod_name: &str) -> bool {
             match self.spec.selector {
                 EipSelector::Pod {
@@ -388,7 +382,7 @@ pub(crate) async fn set_status_association_id(
     name: &str,
     association_id: &str,
 ) -> Result<Eip, kube::Error> {
-    event!(Level::INFO, "Updating status for created EIP.");
+    event!(Level::INFO, "Updating status for assocaited EIP.");
     let patch = serde_json::json!({
         "apiVersion": Eip::version(),
         "kind": "Eip",
@@ -400,21 +394,21 @@ pub(crate) async fn set_status_association_id(
     let params = PatchParams::default();
     let result = api.patch_status(name, &params, &patch).await;
     if result.is_ok() {
-        event!(Level::INFO, "Done updating status for created EIP.");
+        event!(Level::INFO, "Done updating status for assocaited EIP.");
     }
     result
 }
 
 /// Sets the eni and privateIpAddress fields in the Eip status.
 #[instrument(skip(api), err)]
-pub(crate) async fn set_status_attached(
+pub(crate) async fn set_status_should_attach(
     api: &Api<Eip>,
     eip: &Eip,
     eni: &str,
     private_ip_address: &str,
     resource_id: &str,
 ) -> Result<Eip, Error> {
-    event!(Level::INFO, "Updating status for attached EIP.");
+    event!(Level::INFO, "Updating status for attaching EIP.");
     let mut eip = eip.clone();
     let status = eip.status.as_mut().ok_or(Error::MissingEipStatus)?;
     status.eni = Some(eni.to_owned());
@@ -428,7 +422,7 @@ pub(crate) async fn set_status_attached(
         )
         .await?;
     // let result = api.patch_status(name, &params, &patch).await;
-    event!(Level::INFO, "Done updating status for attached EIP.");
+    event!(Level::INFO, "Done updating status for attaching EIP.");
     Ok(result)
 }
 

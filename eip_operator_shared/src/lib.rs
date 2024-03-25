@@ -50,7 +50,7 @@ pub enum Error {
         #[from]
         source: kube_runtime::wait::Error,
     },
-    #[error("No EIP found with that podName.")]
+    #[error("No EIP found with that podName `{0}`.")]
     NoEipResourceWithThatPodName(String),
     #[error("No EIP found with that node selector.")]
     NoEipResourceWithThatNodeSelector,

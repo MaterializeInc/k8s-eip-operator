@@ -2,9 +2,10 @@ use std::time::Duration;
 
 use k8s_openapi::api::core::v1::Node;
 use kube::api::{Api, ListParams};
+use kube::error::ErrorResponse;
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
-use tracing::{event, info, instrument, Level};
+use tracing::{event, info, instrument, warn, Level};
 
 use eip_operator_shared::Error;
 
@@ -88,7 +89,9 @@ impl k8s_controller::Context for Context {
         if eip_description.network_interface_id != Some(eni_id.to_owned())
             || eip_description.private_ip_address != Some(node_ip.to_owned())
         {
-            match crate::eip::set_status_attached(&eip_api, &eip, &eni_id, node_ip, &name).await {
+            match crate::eip::set_status_should_attach(&eip_api, &eip, &eni_id, node_ip, &name)
+                .await
+            {
                 Ok(_) => {
                     info!("Found matching Eip, attaching it");
                     let association_id = crate::aws::associate_eip(
@@ -103,16 +106,14 @@ impl k8s_controller::Context for Context {
                     crate::eip::set_status_association_id(&eip_api, &eip_name, &association_id)
                         .await?;
                 }
-                Err(err)
-                    if err
-                        .to_string()
-                        .contains("Operation cannot be fulfilled on eips.materialize.cloud") =>
-                {
-                    info!(
+                Err(Error::Kube {
+                    source: kube::Error::Api(ErrorResponse { reason, .. }),
+                }) if reason == "Conflict" => {
+                    warn!(
                         "Node {} failed to claim eip {}, rescheduling to try another",
                         name, eip_name
                     );
-                    return Ok(Some(Action::requeue(Duration::from_secs(1))));
+                    return Ok(Some(Action::requeue(Duration::from_secs(3))));
                 }
                 Err(e) => return Err(e),
             };
@@ -132,17 +133,15 @@ impl k8s_controller::Context for Context {
         );
         let node_labels = node.labels();
         let matched_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = matched_eips
-            .into_iter()
-            .filter(|eip| eip.attached())
-            .find(|eip| {
-                eip.matches_node(node_labels)
-                    && eip
-                        .status
-                        .as_ref()
-                        .is_some_and(|s| s.resource_id == Some(node.name_unchecked().clone()))
-            });
-        if let Some(eip) = eip {
+        // find all eips that match (there should be one, but lets not lean on that)
+        let eips = matched_eips.into_iter().filter(|eip| {
+            eip.matches_node(node_labels)
+                && eip
+                    .status
+                    .as_ref()
+                    .is_some_and(|s| s.resource_id == Some(node.name_unchecked().clone()))
+        });
+        for eip in eips {
             let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
             let addresses = crate::aws::describe_address(&self.ec2_client, allocation_id)
                 .await?

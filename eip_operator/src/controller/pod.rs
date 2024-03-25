@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
 use serde::Deserialize;
-use tracing::{event, instrument, Level};
+use tracing::{event, instrument, warn, Level};
 
 use eip_operator_shared::Error;
 
@@ -44,9 +46,14 @@ impl k8s_controller::Context for Context {
             crate::eip::create_for_pod(&eip_api, &name).await?;
         }
 
+        let node_name = match pod.node_name() {
+            Some(node_name) => node_name,
+            None => {
+                warn!("Pod {} is not yet scheduled", name);
+                return Ok(Some(Action::requeue(Duration::from_secs(3))));
+            }
+        };
         let pod_ip = pod.ip().ok_or(Error::MissingPodIp)?;
-        let node_name = pod.node_name().ok_or(Error::MissingNodeName)?;
-
         let node = node_api.get(node_name).await?;
 
         let provider_id = node.provider_id().ok_or(Error::MissingProviderId)?;
@@ -84,8 +91,7 @@ impl k8s_controller::Context for Context {
             .ok_or(Error::MissingAddresses)?
             .swap_remove(0);
         let public_ip = eip_description.public_ip.ok_or(Error::MissingPublicIp)?;
-        // having multiple EIPs
-        crate::eip::set_status_attached(&eip_api, &eip, &eni_id, pod_ip, &name).await?;
+        crate::eip::set_status_should_attach(&eip_api, &eip, &eni_id, pod_ip, &name).await?;
         if eip_description.network_interface_id != Some(eni_id.to_owned())
             || eip_description.private_ip_address != Some(pod_ip.to_owned())
         {
