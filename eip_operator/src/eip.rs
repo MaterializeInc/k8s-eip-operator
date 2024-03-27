@@ -394,7 +394,7 @@ pub(crate) async fn set_status_association_id(
     let params = PatchParams::default();
     let result = api.patch_status(name, &params, &patch).await;
     if result.is_ok() {
-        event!(Level::INFO, "Done updating status for assocaited EIP.");
+        event!(Level::INFO, "Done updating status for associated EIP.");
     }
     result
 }
@@ -408,7 +408,7 @@ pub(crate) async fn set_status_should_attach(
     private_ip_address: &str,
     resource_id: &str,
 ) -> Result<Eip, Error> {
-    event!(Level::INFO, "Updating status for attaching EIP.");
+    event!(Level::INFO, "Updating status before attaching EIP.");
     let mut eip = eip.clone();
     let status = eip.status.as_mut().ok_or(Error::MissingEipStatus)?;
     status.eni = Some(eni.to_owned());
@@ -422,7 +422,7 @@ pub(crate) async fn set_status_should_attach(
         )
         .await?;
     // let result = api.patch_status(name, &params, &patch).await;
-    event!(Level::INFO, "Done updating status for attaching EIP.");
+    event!(Level::INFO, "Done updating status before attaching EIP.");
     Ok(result)
 }
 

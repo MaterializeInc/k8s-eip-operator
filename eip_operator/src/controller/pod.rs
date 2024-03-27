@@ -117,8 +117,8 @@ impl k8s_controller::Context for Context {
 
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
 
-        let matched_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = matched_eips.into_iter().find(|eip| eip.matches_pod(&name));
+        let all_eips = eip_api.list(&ListParams::default()).await?.items;
+        let eip = all_eips.into_iter().find(|eip| eip.matches_pod(&name));
         if let Some(eip) = eip {
             let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
             let addresses = crate::aws::describe_address(&self.ec2_client, allocation_id)

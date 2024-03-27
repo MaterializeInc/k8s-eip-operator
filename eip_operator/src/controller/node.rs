@@ -132,16 +132,16 @@ impl k8s_controller::Context for Context {
             self.namespace.as_deref().unwrap_or("default"),
         );
         let node_labels = node.labels();
-        let matched_eips = eip_api.list(&ListParams::default()).await?.items;
+        let all_eips = eip_api.list(&ListParams::default()).await?.items;
         // find all eips that match (there should be one, but lets not lean on that)
-        let eips = matched_eips.into_iter().filter(|eip| {
+        let matched_eips = all_eips.into_iter().filter(|eip| {
             eip.matches_node(node_labels)
                 && eip
                     .status
                     .as_ref()
                     .is_some_and(|s| s.resource_id == Some(node.name_unchecked().clone()))
         });
-        for eip in eips {
+        for eip in matched_eips {
             let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
             let addresses = crate::aws::describe_address(&self.ec2_client, allocation_id)
                 .await?
