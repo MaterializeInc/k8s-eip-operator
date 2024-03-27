@@ -10,7 +10,7 @@ use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_controller::Controller;
 use k8s_openapi::api::core::v1::Pod;
 use kube::api::{Api, ListParams, Patch, PatchParams};
-use kube::{Client, Resource, ResourceExt};
+use kube::{Client, ResourceExt};
 use tokio::task;
 use tracing::{debug, event, info, instrument, Level};
 
@@ -53,7 +53,8 @@ async fn run() -> Result<(), Error> {
     let k8s_client = Client::try_default().await?;
 
     debug!("Getting ec2_client...");
-    let mut config_loader = aws_config::from_env();
+    let mut config_loader = eip_operator_shared::aws_config_loader_default();
+
     if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
         config_loader = config_loader.endpoint_url(endpoint);
     }
@@ -225,11 +226,11 @@ async fn cleanup_orphan_eips(
             .iter()
             .position(|s| s == LEGACY_POD_FINALIZER_NAME)
         {
-            let pod_name = pod.meta().name.as_ref().ok_or(Error::MissingPodName)?;
+            let pod_name = pod.name_unchecked();
             let finalizer_path = format!("/metadata/finalizers/{}", position);
             pod_api
                 .patch::<Pod>(
-                    pod_name,
+                    &pod_name,
                     &PatchParams::default(),
                     &Patch::Json(json_patch::Patch(vec![
                         PatchOperation::Test(TestOperation {
@@ -253,7 +254,7 @@ async fn report_eip_quota_status(
     quota_client: &ServiceQuotaClient,
 ) -> Result<(), Error> {
     let addresses_result = ec2_client.describe_addresses().send().await?;
-    let allocated = addresses_result.addresses().unwrap_or_default().len();
+    let allocated = addresses_result.addresses().len();
     let quota_result = quota_client
         .get_service_quota()
         .service_code("ec2")

@@ -4,6 +4,9 @@ use std::net::AddrParseError;
 use std::str::FromStr;
 use std::time::Duration;
 
+use aws_config::{BehaviorVersion, ConfigLoader};
+use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
+
 use aws_sdk_ec2::error::SdkError;
 use aws_sdk_ec2::operation::allocate_address::AllocateAddressError;
 use aws_sdk_ec2::operation::associate_address::AssociateAddressError;
@@ -16,9 +19,9 @@ use aws_sdk_servicequotas::operation::get_service_quota::GetServiceQuotaError;
 use futures::Future;
 use hyper::client::HttpConnector;
 use hyper_tls::HttpsConnector;
-use opentelemetry::sdk::trace::{Config, Sampler};
-use opentelemetry::sdk::Resource as OtelResource;
 use opentelemetry::KeyValue;
+use opentelemetry_sdk::trace::{Config, Sampler};
+use opentelemetry_sdk::Resource as OtelResource;
 use tokio::time::error::Elapsed;
 use tonic::metadata::{MetadataKey, MetadataMap};
 use tonic::transport::Endpoint;
@@ -47,7 +50,7 @@ pub enum Error {
         #[from]
         source: kube_runtime::wait::Error,
     },
-    #[error("No EIP found with that podName.")]
+    #[error("No EIP found with that podName `{0}`.")]
     NoEipResourceWithThatPodName(String),
     #[error("No EIP found with that node selector.")]
     NoEipResourceWithThatNodeSelector,
@@ -55,12 +58,6 @@ pub enum Error {
     MissingEipStatus,
     #[error("EIP does not have a UID in its metadata.")]
     MissingEipUid,
-    #[error("EIP does not have a name in its metadata.")]
-    MissingEipName,
-    #[error("Pod does not have a UID in its metadata.")]
-    MissingPodUid,
-    #[error("Pod does not have a name in its metadata.")]
-    MissingPodName,
     #[error("Pod does not have an IP address.")]
     MissingPodIp,
     #[error("Node does not have an IP address.")]
@@ -77,6 +74,8 @@ pub enum Error {
     MultipleEipsTaggedForPod,
     #[error("allocation_id was None.")]
     MissingAllocationId,
+    #[error("aassociation_id was None.")]
+    MissingAssociationId,
     #[error("public_ip was None.")]
     MissingPublicIp,
     #[error("DescribeInstancesResult.reservations was None.")]
@@ -112,7 +111,7 @@ pub enum Error {
     #[error("AWS disassociate_address reported error: {source}")]
     AwsDisassociateAddress {
         #[from]
-        source: SdkError<DisassociateAddressError>,
+        source: DisassociateAddressError,
     },
     #[error("AWS release_address reported error: {source}")]
     AwsReleaseAddress {
@@ -254,7 +253,7 @@ where
                         ))
                         .with_resource(otr),
                 )
-                .install_batch(opentelemetry::runtime::Tokio)
+                .install_batch(opentelemetry_sdk::runtime::Tokio)
                 .unwrap();
             let otel_layer = tracing_opentelemetry::layer()
                 .with_tracer(tracer)
@@ -275,4 +274,9 @@ where
         }
     };
     f().await
+}
+
+pub fn aws_config_loader_default() -> ConfigLoader {
+    aws_config::defaults(BehaviorVersion::latest())
+        .http_client(HyperClientBuilder::new().build(HttpsConnector::new()))
 }

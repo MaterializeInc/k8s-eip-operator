@@ -9,7 +9,7 @@ use aws_sdk_ec2::operation::disassociate_address::DisassociateAddressError;
 use aws_sdk_ec2::operation::release_address::{ReleaseAddressError, ReleaseAddressOutput};
 use aws_sdk_ec2::types::{Address, DomainType, Filter, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::Client as Ec2Client;
-use tracing::{debug, info, instrument};
+use tracing::{debug, error, info, instrument};
 
 pub(crate) const LEGACY_CLUSTER_NAME_TAG: &str = "eip.aws.materialize.com/cluster_name";
 
@@ -150,7 +150,7 @@ pub(crate) async fn describe_addresses_with_tag_value(
 pub(crate) async fn disassociate_eip(
     ec2_client: &Ec2Client,
     association_id: &str,
-) -> Result<(), SdkError<DisassociateAddressError>> {
+) -> Result<(), DisassociateAddressError> {
     match ec2_client
         .disassociate_address()
         .association_id(association_id)
@@ -158,11 +158,16 @@ pub(crate) async fn disassociate_eip(
         .await
     {
         Ok(_) => Ok(()),
-        Err(e) if e.to_string().contains("InvalidAssociationID.NotFound") => {
-            info!(already_disassociated = true);
-            Ok(())
+        Err(e) => {
+            let e = e.into_service_error();
+            if e.meta().code() == Some("InvalidAssociationID.NotFound") {
+                info!("Association id {} already disassociated", association_id);
+                Ok(())
+            } else {
+                error!("Error disassociating {} - {:?}", association_id, e);
+                Err(e)
+            }
         }
-        Err(e) => Err(e),
     }
 }
 

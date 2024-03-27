@@ -7,25 +7,23 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-sdk-ec2 = { version = "0.28", default-features = false, features = [
-  "native-tls",
-  "rt-tokio",
-] }
-aws-sdk-servicequotas = { version = "0.28", default-features = false, features = [
-  "native-tls",
-  "rt-tokio",
-] }
-aws-smithy-http = { version = "0.55", default-features = false, features = [
-  "rt-tokio",
-] }
+aws-config = { version = "0.101", default-features = false}
+aws-sdk-ec2 = { version = "0.38", default-features = false, features = [ "rt-tokio" ] }
+aws-sdk-servicequotas = { version = "0.38", default-features = false, features = [ "rt-tokio" ] }
+aws-smithy-http = { version = "0.59", default-features = false, features = [ "rt-tokio" ] }
+aws-smithy-runtime-api = "0.101"
+aws-smithy-runtime = { version = "0.101", features = ["connector-hyper-0-14-x"] }
+hyper-tls = { version = "0.5.0" }
+
+
 futures = "0.3"
 hyper = { version = "0.14.27", features = ["http2"] }
-hyper-tls = { version = "0.5.0" }
 kube = { workspace = true }
 kube-runtime = { workspace = true }
 native-tls = { version = "0.2.11", features = ["alpn"] }
-opentelemetry = { version = "0.20", features = ["rt-tokio", "trace"] }
-opentelemetry-otlp = { version = "0.13" }
+opentelemetry = { version = "0.21", features = ["trace"] }
+opentelemetry_sdk = { version = "0.21", features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.14" }
 serde = "1"
 serde_json = "1"
 thiserror = "1"
@@ -33,7 +31,7 @@ tokio-native-tls = { version = "0.3.1" }
 tokio = { workspace = true }
 tonic = { version = "0.9.2", features = ["transport"] }
 tracing = "0.1"
-tracing-opentelemetry = "0.20"
+tracing-opentelemetry = "0.22"
 tracing-subscriber = { version = "0.3", features = [
   "registry",
   "env-filter",

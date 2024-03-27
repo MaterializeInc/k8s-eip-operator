@@ -71,11 +71,7 @@ impl RuleManager {
     }
 
     async fn cleanup_legacy_per_pod_rules(&self, pod: &Pod) -> Result<(), Error> {
-        let pod_name = pod
-            .metadata
-            .name
-            .as_ref()
-            .ok_or(eip_operator_shared::Error::MissingPodName)?;
+        let pod_name = pod.name_unchecked();
 
         // Assuming that if it doesn't have an IP during cleanup, that it never had one.
         if let Some(pod_ip_str) = &pod
@@ -98,7 +94,7 @@ impl RuleManager {
                 self.ip_rule_handle.del(rule).execute().await?;
             }
         }
-        self.remove_finalizer(pod, pod_name).await?;
+        self.remove_finalizer(pod, &pod_name).await?;
         Ok(())
     }
 

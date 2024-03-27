@@ -1,10 +1,7 @@
-use std::collections::BTreeMap;
-
 use k8s_openapi::api::core::v1::{Node, Pod};
 
 pub(crate) trait NodeExt {
     fn ip(&self) -> Option<&str>;
-    fn labels(&self) -> Option<&BTreeMap<String, String>>;
     fn provider_id(&self) -> Option<&str>;
 }
 
@@ -19,10 +16,6 @@ impl NodeExt for Node {
                     .find(|addr| addr.type_ == "InternalIP")
                     .map(|addr| addr.address.as_str())
             })
-    }
-
-    fn labels(&self) -> Option<&BTreeMap<String, String>> {
-        self.metadata.labels.as_ref()
     }
 
     fn provider_id(&self) -> Option<&str> {
