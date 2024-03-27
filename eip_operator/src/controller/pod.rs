@@ -80,7 +80,12 @@ impl k8s_controller::Context for Context {
             .filter(|eip| eip.matches_pod(&name))
             .collect::<Vec<_>>();
         let eip = match eips.len() {
-            0 => return Err(Error::NoEipResourceWithThatPodName(name.clone())),
+            0 => {
+                // It is ok to not have an EIP
+                // if one is created later it should ask this pod to re-reconcile
+                warn!("No EIP found with pod name {}.", name);
+                return Ok(None);
+            }
             1 => eips[0].clone(),
             _ => return Err(Error::MultipleEipsTaggedForPod),
         };
