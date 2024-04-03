@@ -9,6 +9,7 @@ use tracing::{info, instrument, warn};
 use eip_operator_shared::Error;
 
 use crate::eip::v2::Eip;
+use crate::eip::EipStatus;
 
 pub(crate) struct Context {
     ec2_client: aws_sdk_ec2::Client,
@@ -89,46 +90,81 @@ impl k8s_controller::Context for Context {
         };
         crate::eip::set_status_created(&eip_api, &name, &allocation_id, &public_ip).await?;
 
-        if !eip.status.as_ref().is_some_and(|s| s.resource_id.is_some()) {
-            let resource_api = eip.get_resource_api(&client);
-            let matched_resources = resource_api
-                .list(&eip.get_resource_list_params())
-                .await?
-                .items;
-            info!(
-                "Eip apply for {} Found matched {} resources",
-                name,
-                matched_resources.len()
-            );
-            for resource in matched_resources {
-                info!(
-                    "Updating eip refresh label for {}",
-                    resource.name_unchecked()
-                );
-                let data = resource.clone().data(serde_json::json!({
-                    "metadata": {
-                            "labels":{
-                               "eip.materialize.cloud/refresh":  format!("{}",rand::thread_rng().gen::<u64>()),
+        // Eip has been created we should now,
+        // - detach from any resources which should no longer associate with it
+        // - attempt to find resource which can associate with it
+        let status = eip.status.clone().unwrap_or(EipStatus {
+            allocation_id: Some(allocation_id),
+            public_ip_address: Some(public_ip),
+            ..Default::default()
+        });
 
-                            }
-                    }
-                }));
-                if let Err(err) = resource_api
-                    .patch_metadata(
-                        &resource.name_unchecked(),
-                        &PatchParams::default(),
-                        &kube::core::params::Patch::Merge(serde_json::json!(data)),
-                    )
-                    .await
-                {
-                    warn!(
-                        "Failed to patch resource {} refresh label for {}: err {:?}",
-                        resource.name_unchecked(),
-                        name,
-                        err
-                    );
-                };
+        let resource_api = eip.get_resource_api(&client);
+        let matched_resources = resource_api
+            .list(&eip.get_resource_list_params())
+            .await?
+            .items;
+
+        if let Some(ref associated_resource_id) = status.resource_id {
+            // Eip's status says it is associated with something
+            // we should ensure that it still matches us
+            if matched_resources
+                .iter()
+                .any(|r| &r.name_any() == associated_resource_id)
+            {
+                // association is correct
+                info!(
+                    "Eip {} correctly associated with matched resource {}",
+                    name, associated_resource_id
+                );
+                return Ok(None);
+            } else {
+                // association is incorrect
+                info!(
+                    "Eip {} incorrectly associated with matched resource {}, disassociating",
+                    name, associated_resource_id
+                );
+                if let Some(association_id) = status.association_id {
+                    crate::aws::disassociate_eip(&self.ec2_client, &association_id).await?;
+                }
+                crate::eip::set_status_detached(&eip_api, &eip.name_unchecked()).await?;
             }
+        }
+
+        // Not associated, ask matched resources to associate
+        info!(
+            "Eip apply for {} Found matched {} resources",
+            name,
+            matched_resources.len()
+        );
+        for resource in matched_resources {
+            info!(
+                "Updating eip refresh label for {}",
+                resource.name_unchecked()
+            );
+            let data = resource.clone().data(serde_json::json!({
+                "metadata": {
+                        "labels":{
+                           "eip.materialize.cloud/refresh":  format!("{}",rand::thread_rng().gen::<u64>()),
+
+                        }
+                }
+            }));
+            if let Err(err) = resource_api
+                .patch_metadata(
+                    &resource.name_unchecked(),
+                    &PatchParams::default(),
+                    &kube::core::params::Patch::Merge(serde_json::json!(data)),
+                )
+                .await
+            {
+                warn!(
+                    "Failed to patch resource {} refresh label for {}: err {:?}",
+                    resource.name_unchecked(),
+                    name,
+                    err
+                );
+            };
         }
 
         Ok(None)

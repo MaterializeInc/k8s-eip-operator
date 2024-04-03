@@ -123,8 +123,14 @@ impl k8s_controller::Context for Context {
         let eip_api = Api::<Eip>::namespaced(client.clone(), &pod.namespace().unwrap());
 
         let all_eips = eip_api.list(&ListParams::default()).await?.items;
-        let eip = all_eips.into_iter().find(|eip| eip.matches_pod(&name));
-        if let Some(eip) = eip {
+
+        let eips = all_eips.into_iter().filter(|eip| {
+            eip.status.as_ref().map_or(false, |s| {
+                s.resource_id.as_ref().map_or(false, |r| *r == name)
+            })
+        });
+
+        for eip in eips {
             let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
             let addresses = crate::aws::describe_address(&self.ec2_client, allocation_id)
                 .await?
@@ -136,7 +142,7 @@ impl k8s_controller::Context for Context {
                 }
             }
             crate::eip::set_status_detached(&eip_api, &eip.name_unchecked()).await?;
-        };
+        }
         if should_autocreate_eip(pod) {
             event!(Level::INFO, should_autocreate_eip = true);
             crate::eip::delete(&eip_api, &name).await?;

@@ -382,7 +382,7 @@ pub(crate) async fn set_status_association_id(
     name: &str,
     association_id: &str,
 ) -> Result<Eip, kube::Error> {
-    event!(Level::INFO, "Updating status for assocaited EIP.");
+    event!(Level::INFO, "Updating status for associated EIP.");
     let patch = serde_json::json!({
         "apiVersion": Eip::version(),
         "kind": "Eip",
