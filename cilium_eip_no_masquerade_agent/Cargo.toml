@@ -1,6 +1,6 @@
 [package]
 name = "cilium-eip-no-masquerade-agent"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 license = "Apache-2.0"
 
@@ -12,8 +12,6 @@ eip-operator-shared = { workspace = true }
 futures = { workspace = true }
 iptables = { workspace = true }
 json-patch = { workspace = true }
-k8s-openapi = { workspace = true }
-kube = { workspace = true }
 netlink-packet-route = { workspace = true }
 rand = { workspace = true }
 rtnetlink = { workspace = true }

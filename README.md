@@ -171,8 +171,6 @@ Cilium (as of 1.12.0) does not seem to support configuring masquerade on a per-p
 
 ##### B. Run a privileged daemonset in the host network to inject ip rules for pods managed by the eip-operator.
 
-You must set the `VPC_CIDR` environment variable to match the Cilium `ipv4NativeRoutingCIDR`. This allows the agent to detect the appropriate table to forward to from the existing Cilium-created rules.
-
 ```yaml
 apiVersion: apps/v1
 kind: DaemonSet
@@ -193,13 +191,6 @@ spec:
         env:
         - name: RUST_LOG
           value: INFO
-        - name: VPC_CIDR
-          value: 10.2.0.0/16
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: spec.nodeName
         image: materialize/k8s-eip-operator
         name: eip-operator
         securityContext:
