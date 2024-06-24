@@ -12,7 +12,7 @@ aws-sdk-ec2 = { version = "0.38", default-features = false, features = [ "rt-tok
 aws-sdk-servicequotas = { version = "0.38", default-features = false, features = [ "rt-tokio" ] }
 aws-smithy-http = { version = "0.59", default-features = false, features = [ "rt-tokio" ] }
 aws-smithy-runtime-api = "0.101"
-aws-smithy-runtime = { version = "0.101", features = ["connector-hyper-0-14-x"] }
+aws-smithy-runtime = { version = "1.6", features = ["connector-hyper-0-14-x"] }
 hyper-tls = { version = "0.5.0" }
 
 
