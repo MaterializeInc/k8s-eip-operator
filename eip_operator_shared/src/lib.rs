@@ -66,6 +66,10 @@ pub enum Error {
     MissingNodeName,
     #[error("Node does not have labels.")]
     MissingNodeLabels,
+    #[error("Node does not have a status.")]
+    MissingNodeStatus,
+    #[error("Node does not have a ready condition.")]
+    MissingNodeReadyCondition,
     #[error("Node does not have a provider_id in its spec.")]
     MissingProviderId,
     #[error("Node provider_id is not in expected format.")]
