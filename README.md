@@ -1,3 +1,4 @@
+⚠️⚠️ **WARNING!** ⚠️⚠️ The Materialize K8s-eip-operator will soon be archived and no longer be under active development.
 # k8s-eip-operator
 
 Manage external connections to Kubernetes pods or nodes using AWS Elastic IPs (EIPs).
