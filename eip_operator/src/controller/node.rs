@@ -58,9 +58,8 @@ impl k8s_controller::Context for Context {
 
         let node_ip = node.ip().ok_or(Error::MissingNodeIp)?;
         let node_labels = node.labels();
-        let node_conditon_ready_status = get_ready_status_from_node(node)
-            .await
-            .ok_or(Error::MissingNodeReadyCondition)?;
+        let node_condition_ready_status =
+            get_ready_status_from_node(node).ok_or(Error::MissingNodeReadyCondition)?;
 
         let provider_id = node.provider_id().ok_or(Error::MissingProviderId)?;
         let instance_id = provider_id
@@ -105,7 +104,7 @@ impl k8s_controller::Context for Context {
         let attach_result = match (
             network_interface_mismatch,
             private_ip_mismatch,
-            node_conditon_ready_status.as_str(),
+            node_condition_ready_status.as_str(),
         ) {
             (true, false, "True") | (false, true, "True") | (true, true, "True") => {
                 crate::eip::set_status_should_attach(&eip_api, &eip, &eni_id, node_ip, &name).await
@@ -232,7 +231,7 @@ async fn get_egress_nodes(api: &Api<Node>) -> Result<Vec<Node>, kube::Error> {
 }
 
 /// Get Ready status from the node status field.
-async fn get_ready_status_from_node(node: &Node) -> Option<String> {
+fn get_ready_status_from_node(node: &Node) -> Option<String> {
     node.status
         .as_ref()?
         .conditions
@@ -243,14 +242,13 @@ async fn get_ready_status_from_node(node: &Node) -> Option<String> {
 }
 
 /// Retrieve node names and ready status given a list of nodes.
-async fn get_nodes_ready_status(node_list: Vec<Node>) -> Result<BTreeMap<String, String>, Error> {
+fn get_nodes_ready_status(node_list: Vec<Node>) -> Result<BTreeMap<String, String>, Error> {
     let mut node_ready_status_map = BTreeMap::new();
 
     for node in node_list {
         if let Some(ref node_name) = node.metadata.name {
-            let ready_status = get_ready_status_from_node(&node)
-                .await
-                .ok_or(Error::MissingNodeReadyCondition)?;
+            let ready_status =
+                get_ready_status_from_node(&node).ok_or(Error::MissingNodeReadyCondition)?;
 
             node_ready_status_map.insert(node_name.to_string(), ready_status);
         }
@@ -266,57 +264,51 @@ async fn get_nodes_ready_status(node_list: Vec<Node>) -> Result<BTreeMap<String,
 async fn cleanup_old_egress_nodes(eip_api: &Api<Eip>, node_api: &Api<Node>) -> Result<(), Error> {
     // Gather a list of egress nodes and EIPs to check for potential cleanup.
     let node_list = get_egress_nodes(&Api::all(node_api.clone().into())).await?;
-    match node_list.len() {
-        // Exit early and avoid extra network calls.
-        len if len < 2 => {
-            info!("Less than two egress nodes found, no cleanup is possible.");
-            return Ok(());
-        }
-        // At least two nodes found, continue with cleanup.
-        _ => {
-            let node_names_and_status: BTreeMap<String, String> =
-                get_nodes_ready_status(node_list).await?;
-            let (nodes_status_ready, nodes_status_unknown): (BTreeSet<String>, BTreeSet<String>) =
-                node_names_and_status.iter().fold(
-                    (BTreeSet::new(), BTreeSet::new()),
-                    |(mut ready, mut unknown), (name, status)| {
-                        match status.as_str() {
-                            "True" => {
-                                ready.insert(name.clone());
-                            }
-                            "Unknown" => {
-                                unknown.insert(name.clone());
-                            }
-                            // Ignore nodes in other states.
-                            &_ => {}
-                        }
-                        (ready, unknown)
-                    },
-                );
+    if node_list.len() < 2 {
+        info!("Less than two egress nodes found, no cleanup is possible.");
+        return Ok(());
+    }
 
-            // Ensure an egress node exists with an EIP and Ready state of `true`.
-            let eip_resource_ids: BTreeSet<String> = eip_api
-                .list(&ListParams::default())
-                .await?
-                .items
-                .into_iter()
-                .filter_map(|eip| eip.status.and_then(|s| s.resource_id))
-                .collect();
-            let matched_ready_nodes_with_eip: BTreeSet<String> = nodes_status_ready
-                .intersection(&eip_resource_ids)
-                .cloned()
-                .collect();
-            info!(
-                "Found ready nodes with EIPs: {:?}",
-                matched_ready_nodes_with_eip
-            );
-
-            // At least one node is ready with an EIP, update the status label of nodes in an unknown state.
-            if !matched_ready_nodes_with_eip.is_empty() {
-                for node_name in nodes_status_unknown {
-                    add_gateway_status_label(node_api, &node_name, "unknown").await?;
+    let node_names_and_status: BTreeMap<String, String> = get_nodes_ready_status(node_list)?;
+    let (nodes_status_ready, nodes_status_unknown): (BTreeSet<String>, BTreeSet<String>) =
+        node_names_and_status.iter().fold(
+            (BTreeSet::new(), BTreeSet::new()),
+            |(mut ready, mut unknown), (name, status)| {
+                match status.as_str() {
+                    "True" => {
+                        ready.insert(name.clone());
+                    }
+                    "Unknown" => {
+                        unknown.insert(name.clone());
+                    }
+                    // Ignore nodes in other states.
+                    &_ => {}
                 }
-            }
+                (ready, unknown)
+            },
+        );
+
+    // Ensure an egress node exists with an EIP and Ready state of `true`.
+    let eip_resource_ids: BTreeSet<String> = eip_api
+        .list(&ListParams::default())
+        .await?
+        .items
+        .into_iter()
+        .filter_map(|eip| eip.status.and_then(|s| s.resource_id))
+        .collect();
+    let matched_ready_nodes_with_eip: BTreeSet<String> = nodes_status_ready
+        .intersection(&eip_resource_ids)
+        .cloned()
+        .collect();
+    info!(
+        "Found ready nodes with EIPs: {:?}",
+        matched_ready_nodes_with_eip
+    );
+
+    // At least one node is ready with an EIP, update the status label of nodes in an unknown state.
+    if !matched_ready_nodes_with_eip.is_empty() {
+        for node_name in nodes_status_unknown {
+            add_gateway_status_label(node_api, &node_name, "unknown").await?;
         }
     }
 
