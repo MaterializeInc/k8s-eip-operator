@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::pin::pin;
 use std::time::Duration;
 
 use aws_sdk_ec2::types::Filter;
@@ -6,9 +7,10 @@ use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_servicequotas::types::ServiceQuota;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
 use futures::future::join_all;
+use futures::TryStreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_controller::Controller;
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use tokio::task;
@@ -92,6 +94,9 @@ async fn run() -> Result<(), Error> {
         None => Api::<Eip>::all(k8s_client.clone()),
     };
 
+    debug!("Getting node api");
+    let node_api = Api::<Node>::all(k8s_client.clone());
+
     debug!("Cleaning up any orphaned EIPs");
     cleanup_orphan_eips(
         &ec2_client,
@@ -150,6 +155,32 @@ async fn run() -> Result<(), Error> {
             None => Controller::namespaced_all(k8s_client, context, watch_config),
         };
         task::spawn(eip_controller.run())
+    });
+
+    tasks.push({
+        let eip_api = eip_api.clone();
+        let node_api = node_api.clone();
+        let watch_config =
+            kube_runtime::watcher::Config::default().labels(EGRESS_GATEWAY_NODE_SELECTOR_LABEL_KEY);
+
+        task::spawn(async move {
+            let mut watcher = pin!(kube_runtime::watcher(node_api.clone(), watch_config));
+
+            while let Some(node) = watcher.try_next().await.unwrap_or_else(|e| {
+                event!(Level::ERROR, err = %e, "Error watching nodes");
+                None
+            }) {
+                if let kube_runtime::watcher::Event::Applied(_)
+                | kube_runtime::watcher::Event::Deleted(_) = node
+                {
+                    if let Err(err) =
+                        controller::node::cleanup_old_egress_nodes(&eip_api, &node_api).await
+                    {
+                        event!(Level::ERROR, err = %err, "Node egress cleanup reporting error");
+                    }
+                }
+            }
+        })
     });
 
     join_all(tasks).await;

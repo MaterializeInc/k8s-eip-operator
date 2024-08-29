@@ -50,12 +50,6 @@ impl k8s_controller::Context for Context {
             self.namespace.as_deref().unwrap_or("default"),
         );
 
-        // Check for unresponsive egress nodes and cleanup their egress status.
-        // This check must be done before any checks for EIPS. The EIPS may be
-        // already unassociated from the node.
-        let node_api = Api::<Node>::all(client.clone());
-        cleanup_old_egress_nodes(&eip_api, &node_api).await?;
-
         let node_ip = node.ip().ok_or(Error::MissingNodeIp)?;
         let node_labels = node.labels();
         let node_condition_ready_status =
@@ -261,7 +255,10 @@ fn get_nodes_ready_status(node_list: Vec<Node>) -> Result<BTreeMap<String, Strin
 /// Update their status label if another node is available.
 /// Note: Egress traffic will be immediately dropped once the egress status label is changed away from "true"
 #[instrument(skip(), err)]
-async fn cleanup_old_egress_nodes(eip_api: &Api<Eip>, node_api: &Api<Node>) -> Result<(), Error> {
+pub(crate) async fn cleanup_old_egress_nodes(
+    eip_api: &Api<Eip>,
+    node_api: &Api<Node>,
+) -> Result<(), Error> {
     // Gather a list of egress nodes and EIPs to check for potential cleanup.
     let node_list = get_egress_nodes(&Api::all(node_api.clone().into())).await?;
     if node_list.len() < 2 {
