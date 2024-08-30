@@ -22,8 +22,10 @@ use eip::v2::Eip;
 
 mod aws;
 mod controller;
+mod egress;
 mod eip;
 mod kube_ext;
+mod node;
 
 const LEGACY_MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
 const LEGACY_POD_FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
@@ -173,10 +175,8 @@ async fn run() -> Result<(), Error> {
                 if let kube_runtime::watcher::Event::Applied(_)
                 | kube_runtime::watcher::Event::Deleted(_) = node
                 {
-                    if let Err(err) =
-                        controller::node::cleanup_old_egress_nodes(&eip_api, &node_api).await
-                    {
-                        event!(Level::ERROR, err = %err, "Node egress cleanup reporting error");
+                    if let Err(err) = crate::egress::label_egress_nodes(&eip_api, &node_api).await {
+                        event!(Level::ERROR, err = %err, "Node egress labeling reporting error");
                     }
                 }
             }
