@@ -25,7 +25,6 @@ mod controller;
 mod egress;
 mod eip;
 mod kube_ext;
-mod node;
 
 const LEGACY_MANAGE_EIP_LABEL: &str = "eip.aws.materialize.com/manage";
 const LEGACY_POD_FINALIZER_NAME: &str = "eip.aws.materialize.com/disassociate";
@@ -36,7 +35,7 @@ const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id"
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
 const EGRESS_GATEWAY_NODE_SELECTOR_LABEL_KEY: &str = "workload";
 const EGRESS_GATEWAY_NODE_SELECTOR_LABEL_VALUE: &str = "materialize-egress";
-const EGRESS_NODE_STATUS_LABEL: &str = "egress-gateway.materialize.cloud/status";
+const EGRESS_NODE_STATUS_LABEL: &str = "egress-gateway.materialize.cloud/ready-status";
 
 // See https://us-east-1.console.aws.amazon.com/servicequotas/home/services/ec2/quotas
 // and filter in the UI for EC2 quotas like this, or use the CLI:
@@ -146,7 +145,7 @@ async fn run() -> Result<(), Error> {
         let context = controller::node::Context::new(ec2_client.clone(), namespace.clone());
         let watch_config = kube_runtime::watcher::Config::default().labels(MANAGE_EIP_LABEL);
         let node_controller = Controller::cluster(k8s_client.clone(), context, watch_config);
-        task::spawn(node_controller.run())
+        task::spawn(node_controller.with_concurrency(1).run())
     });
 
     tasks.push({
@@ -162,18 +161,17 @@ async fn run() -> Result<(), Error> {
     tasks.push({
         let eip_api = eip_api.clone();
         let node_api = node_api.clone();
-        let watch_config =
-            kube_runtime::watcher::Config::default().labels(EGRESS_GATEWAY_NODE_SELECTOR_LABEL_KEY);
+        let watch_config = kube_runtime::watcher::Config::default();
 
         task::spawn(async move {
-            let mut watcher = pin!(kube_runtime::watcher(node_api.clone(), watch_config));
+            let mut watcher = pin!(kube_runtime::watcher(eip_api.clone(), watch_config));
 
-            while let Some(node) = watcher.try_next().await.unwrap_or_else(|e| {
-                event!(Level::ERROR, err = %e, "Error watching nodes");
+            while let Some(eip) = watcher.try_next().await.unwrap_or_else(|e| {
+                event!(Level::ERROR, err = %e, "Error watching eips");
                 None
             }) {
-                if let kube_runtime::watcher::Event::Applied(_)
-                | kube_runtime::watcher::Event::Deleted(_) = node
+                if let kube_runtime::watcher::Event::Apply(_)
+                | kube_runtime::watcher::Event::Delete(_) = eip
                 {
                     if let Err(err) = crate::egress::label_egress_nodes(&eip_api, &node_api).await {
                         event!(Level::ERROR, err = %err, "Node egress labeling reporting error");
@@ -187,6 +185,13 @@ async fn run() -> Result<(), Error> {
 
     debug!("exiting");
     Ok(())
+}
+
+/// Generate a finalizer path.
+fn finalizer_path(position: usize) -> jsonptr::Pointer {
+    format!("/metadata/finalizers/{}", position)
+        .parse()
+        .unwrap()
 }
 
 /// Finds all EIPs tagged for this cluster, then compares them to the pod UIDs. If the EIP is not
@@ -261,18 +266,17 @@ async fn cleanup_orphan_eips(
             .position(|s| s == LEGACY_POD_FINALIZER_NAME)
         {
             let pod_name = pod.name_unchecked();
-            let finalizer_path = format!("/metadata/finalizers/{}", position);
             pod_api
                 .patch::<Pod>(
                     &pod_name,
                     &PatchParams::default(),
                     &Patch::Json(json_patch::Patch(vec![
                         PatchOperation::Test(TestOperation {
-                            path: finalizer_path.clone(),
+                            path: finalizer_path(position),
                             value: LEGACY_POD_FINALIZER_NAME.into(),
                         }),
                         PatchOperation::Remove(RemoveOperation {
-                            path: finalizer_path,
+                            path: finalizer_path(position),
                         }),
                     ])),
                 )

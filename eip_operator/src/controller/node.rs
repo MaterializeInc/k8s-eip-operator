@@ -69,7 +69,12 @@ impl k8s_controller::Context for Context {
         // Check the existing Node for EIP association and ready status.
         // Node's that go in to a "NotReady" or "Unknown" state should have their EIP
         // disassociated to allow a new node to spawn and use the EIP.
-        let node_condition_ready_status = crate::node::get_ready_status_from_node(node)
+        let node_condition_ready_status = node
+            .status
+            .as_ref()
+            .and_then(|status| status.conditions.as_ref())
+            .and_then(|conditions| conditions.iter().find(|c| c.type_ == "Ready"))
+            .map(|condition| condition.status.clone())
             .ok_or(Error::MissingNodeReadyCondition)?;
         match node_condition_ready_status.as_str() {
             // Remove the EIP from nodes with an Unknown or NotReady ready status.
