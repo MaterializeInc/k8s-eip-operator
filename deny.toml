@@ -24,6 +24,22 @@ skip = [
     { name = "ordered-float", version = "2.10.0" },
     { name = "fastrand", version = "2.0.1" },
     { name = "regex-syntax", version = "0.6.29" },
+    { name = "sync_wrapper", version = "0.1.2" },
+    { name = "sync_wrapper", version = "1.0.1" },
+    { name = "hyper-tls", version = "0.5.0" },
+    { name = "hyper-tls", version = "0.6.0" },
+    { name = "socket2", version = "0.4.9" },
+    { name = "socket2", version = "0.5.7" },
+    { name = "hyper", version = "0.14.27" },
+    { name = "hyper", version = "1.4.1" },
+    { name = "base64", version = "0.21.4" },
+    { name = "base64", version = "0.22.1" },
+    { name = "http-body", version = "0.4.5" },
+    { name = "http-body", version = "1.0.1" },
+    { name = "h2", version = "0.3.26"},
+    { name = "h2", version = "0.4.6"},
+    { name = "http", version = "0.2.9"},
+    { name = "http", version = "1.1.0"},
 ]
 
 # Use `tracing` instead.

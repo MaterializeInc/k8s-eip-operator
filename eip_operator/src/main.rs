@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::pin::pin;
 use std::time::Duration;
 
+use aws_config::{BehaviorVersion, ConfigLoader};
 use aws_sdk_ec2::types::Filter;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_servicequotas::types::ServiceQuota;
@@ -59,7 +60,7 @@ async fn run() -> Result<(), Error> {
     let k8s_client = Client::try_default().await?;
 
     debug!("Getting ec2_client...");
-    let mut config_loader = eip_operator_shared::aws_config_loader_default();
+    let mut config_loader = aws_config_loader_default();
 
     if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
         config_loader = config_loader.endpoint_url(endpoint);
@@ -313,4 +314,11 @@ fn set_abort_on_panic() {
         old_hook(panic_info);
         std::process::abort();
     }));
+}
+
+fn aws_config_loader_default() -> ConfigLoader {
+    let connector = hyper_tls::HttpsConnector::new();
+    let hyper_client_builder =
+        aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new().build(connector);
+    aws_config::defaults(BehaviorVersion::latest()).http_client(hyper_client_builder)
 }

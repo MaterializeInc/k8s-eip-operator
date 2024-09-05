@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM rust:1.76.0-slim-bookworm AS chef
+FROM --platform=$BUILDPLATFORM rust:1.78.0-slim-bookworm AS chef
 RUN cargo install --locked cargo-chef
 ARG TARGETARCH
 RUN echo -n "$TARGETARCH" | sed 's#amd64#x86_64#;s#arm64#aarch64#' > /cargo_arch
