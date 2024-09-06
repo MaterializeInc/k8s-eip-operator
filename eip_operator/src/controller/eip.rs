@@ -38,6 +38,7 @@ impl k8s_controller::Context for Context {
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/destroy";
 
+    #[allow(clippy::blocks_in_conditions)]
     #[instrument(skip(self, client, eip), err)]
     async fn apply(
         &self,
@@ -170,6 +171,7 @@ impl k8s_controller::Context for Context {
         Ok(None)
     }
 
+    #[allow(clippy::blocks_in_conditions)]
     #[instrument(skip(self, _client, eip), err)]
     async fn cleanup(
         &self,

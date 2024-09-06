@@ -29,6 +29,7 @@ impl k8s_controller::Context for Context {
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/disassociate";
 
+    #[allow(clippy::blocks_in_conditions)]
     #[instrument(skip(self, client, pod), err)]
     async fn apply(
         &self,
@@ -112,6 +113,7 @@ impl k8s_controller::Context for Context {
         Ok(None)
     }
 
+    #[allow(clippy::blocks_in_conditions)]
     #[instrument(skip(self, client, pod), err)]
     async fn cleanup(
         &self,

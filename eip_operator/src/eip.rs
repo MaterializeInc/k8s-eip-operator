@@ -237,7 +237,8 @@ pub mod v2 {
                         },
                     },
                 );
-                eip.meta_mut().resource_version = eip_v1.metadata.resource_version.clone();
+                let resource_version = eip_v1.metadata.resource_version.clone();
+                eip.meta_mut().resource_version = resource_version;
                 Ok(eip)
             } else {
                 Err(None)
