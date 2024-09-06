@@ -141,7 +141,7 @@ impl k8s_controller::Context for Context {
                     crate::aws::disassociate_eip(&self.ec2_client, &association_id).await?;
                 }
             }
-            crate::eip::set_status_detached(&eip_api, &eip.name_unchecked()).await?;
+            crate::eip::set_status_detached(&eip_api, &eip).await?;
         }
         if should_autocreate_eip(pod) {
             event!(Level::INFO, should_autocreate_eip = true);

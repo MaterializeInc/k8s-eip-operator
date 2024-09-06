@@ -96,7 +96,7 @@ impl k8s_controller::Context for Context {
                         &node_eip_name
                     );
                     crate::aws::disassociate_eip(&self.ec2_client, &node_eip_name).await?;
-                    crate::eip::set_status_detached(&eip_api, &node_eip_name).await?;
+                    crate::eip::set_status_detached(&eip_api, &eip).await?;
 
                     return Ok(None);
                 }
@@ -197,7 +197,7 @@ impl k8s_controller::Context for Context {
                     crate::aws::disassociate_eip(&self.ec2_client, &association_id).await?;
                 }
             }
-            crate::eip::set_status_detached(&eip_api, &eip.name_unchecked()).await?;
+            crate::eip::set_status_detached(&eip_api, &eip).await?;
         }
         Ok(None)
     }
