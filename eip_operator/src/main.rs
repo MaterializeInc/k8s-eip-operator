@@ -167,14 +167,14 @@ async fn run() -> Result<(), Error> {
         task::spawn(async move {
             let mut watcher = pin!(kube_runtime::watcher(eip_api.clone(), watch_config));
 
-            while let Some(eip) = watcher.try_next().await.unwrap_or_else(|e| {
+            while let Some(eip_event) = watcher.try_next().await.unwrap_or_else(|e| {
                 event!(Level::ERROR, err = %e, "Error watching eips");
                 None
             }) {
-                if let kube_runtime::watcher::Event::Apply(_)
-                | kube_runtime::watcher::Event::Delete(_) = eip
+                if let kube_runtime::watcher::Event::Apply(eip)
+                | kube_runtime::watcher::Event::Delete(eip) = eip_event
                 {
-                    if let Err(err) = crate::egress::label_egress_nodes(&eip_api, &node_api).await {
+                    if let Err(err) = crate::egress::label_egress_nodes(&eip, &node_api).await {
                         event!(Level::ERROR, err = %err, "Node egress labeling reporting error");
                     }
                 }

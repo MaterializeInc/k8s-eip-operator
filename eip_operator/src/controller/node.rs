@@ -93,7 +93,7 @@ impl k8s_controller::Context for Context {
                 });
                 if let Some(eip) = node_eip {
                     warn!(
-                        "Node {} is in an unknown state, disassociating EIP {}",
+                        "Node {} is in an unresponsive state, detaching EIP {}",
                         &name.clone(),
                         &eip.name_unchecked()
                     );
