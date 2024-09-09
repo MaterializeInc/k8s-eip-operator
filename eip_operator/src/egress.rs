@@ -10,7 +10,7 @@ use crate::EGRESS_GATEWAY_NODE_SELECTOR_LABEL_VALUE;
 
 /// Applies label specifying the ready status of the egress gateway node.
 #[instrument(skip(api), err)]
-async fn add_gateway_status_label(
+pub(crate) async fn add_gateway_status_label(
     api: &Api<Node>,
     name: &str,
     status: &str,

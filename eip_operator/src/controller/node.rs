@@ -78,11 +78,13 @@ impl k8s_controller::Context for Context {
             .map(|condition| condition.status.clone())
             .ok_or(Error::MissingNodeReadyCondition)?;
         match node_condition_ready_status.as_str() {
-            // Remove the EIP from nodes with an Unknown or NotReady ready status.
+            // Skip Ready Status True and continue with EIP node association.
+            "True" => {}
+            // Detach the EIP from a node with an Unknown or False ready status.
             // An Unknown ready status could mean the node is unresponsive or experienced a hardware failure.
             // A NotReady ready status could mean the node is experiencing a network issue.
-            "Unknown" | "False" => {
-                // Skip disassociation if no EIP is not associated with the node.
+            _ => {
+                // Skip detachment if no EIP is associated with this node.
                 let node_eip = matched_eips.iter().find(|eip| {
                     eip.status.as_ref().is_some_and(|s| {
                         s.resource_id.is_some()
@@ -90,20 +92,16 @@ impl k8s_controller::Context for Context {
                     })
                 });
                 if let Some(eip) = node_eip {
-                    let node_eip_name = eip.name_unchecked();
                     warn!(
                         "Node {} is in an unknown state, disassociating EIP {}",
                         &name.clone(),
-                        &node_eip_name
+                        &eip.name_unchecked()
                     );
-                    crate::aws::disassociate_eip(&self.ec2_client, &node_eip_name).await?;
                     crate::eip::set_status_detached(&eip_api, eip).await?;
 
                     return Ok(None);
                 }
             }
-            // Skip Ready Status True and continue with EIP node association.
-            _ => {}
         }
 
         let eip = matched_eips.into_iter().find(|eip| {
@@ -201,6 +199,11 @@ impl k8s_controller::Context for Context {
             }
             crate::eip::set_status_detached(&eip_api, &eip).await?;
         }
+
+        let node_api = Api::<Node>::all(client);
+        crate::egress::add_gateway_status_label(&node_api, node.name_unchecked().as_str(), "false")
+            .await?;
+
         Ok(None)
     }
 }
