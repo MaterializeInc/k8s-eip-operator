@@ -67,9 +67,13 @@ impl k8s_controller::Context for Context {
             return Err(Error::NoEipResourceWithThatNodeSelector);
         }
 
-        // Check the existing Node for EIP association and ready status.
-        // Node's that go in to a "NotReady" or "Unknown" state should have their EIP
-        // disassociated to allow a new node to spawn and use the EIP.
+        let eip = matched_eips.into_iter().find(|eip| {
+            eip.status.as_ref().is_some_and(|s| {
+                s.resource_id.is_none()
+                    || s.resource_id.as_ref().map(|r| r == &name).unwrap_or(false)
+            })
+        });
+
         let node_condition_ready_status = node
             .status
             .as_ref()
@@ -77,39 +81,24 @@ impl k8s_controller::Context for Context {
             .and_then(|conditions| conditions.iter().find(|c| c.type_ == "Ready"))
             .map(|condition| condition.status.clone())
             .ok_or(Error::MissingNodeReadyCondition)?;
-        match node_condition_ready_status.as_str() {
-            // Skip Ready Status True and continue with EIP node association.
-            "True" => {}
-            // Detach the EIP from a node with an Unknown or False ready status.
-            // An Unknown ready status could mean the node is unresponsive or experienced a hardware failure.
-            // A NotReady ready status could mean the node is experiencing a network issue.
-            _ => {
-                // Skip detachment if no EIP is associated with this node.
-                let node_eip = matched_eips.iter().find(|eip| {
-                    eip.status.as_ref().is_some_and(|s| {
-                        s.resource_id.is_some()
-                            && s.resource_id.as_ref().map(|r| r == &name).unwrap_or(false)
-                    })
-                });
-                if let Some(eip) = node_eip {
-                    warn!(
-                        "Node {} is in an unresponsive state, detaching EIP {}",
-                        &name.clone(),
-                        &eip.name_unchecked()
-                    );
-                    crate::eip::set_status_detached(&eip_api, eip).await?;
 
-                    return Ok(None);
-                }
+        // Check the Node's EIP claim and ready status.
+        // Node's with a ready status of "False" or "Unknown" should not have a claim to an EIP.
+        if node_condition_ready_status != "True" {
+            // If an EIP has a resource id label pointing to this node, remove that label releasing this nodes claim to the EIP
+            if let Some(eip) = eip {
+                warn!(
+                    "Node {} is in an unresponsive state, setting status detached on EIP {}",
+                    &name.clone(),
+                    &eip.name_unchecked()
+                );
+                crate::eip::set_status_detached(&eip_api, &eip).await?;
             }
+
+            dbg!("Node {} is not ready, skipping EIP claim", &name);
+            return Ok(None);
         }
 
-        let eip = matched_eips.into_iter().find(|eip| {
-            eip.status.as_ref().is_some_and(|s| {
-                s.resource_id.is_none()
-                    || s.resource_id.as_ref().map(|r| r == &name).unwrap_or(false)
-            })
-        });
         let Some(eip) = eip else {
             info!("No un-associated eips found for node {}", &name);
             return Ok(None);
@@ -126,12 +115,8 @@ impl k8s_controller::Context for Context {
 
         let eni_id = crate::aws::get_eni_from_private_ip(&instance_description, node_ip)
             .ok_or(Error::NoInterfaceWithThatIp)?;
-        // Ensure only node's marked with ready status True are associated with an EIP.
-        // We don't want to associate an EIP with a node that is not ready and potentially remove it
-        // in the next reconciliation loop if the node is still coming online.
-        if (eip_description.network_interface_id != Some(eni_id.to_owned())
-            || eip_description.private_ip_address != Some(node_ip.to_owned()))
-            && node_condition_ready_status == "True"
+        if eip_description.network_interface_id != Some(eni_id.to_owned())
+            || eip_description.private_ip_address != Some(node_ip.to_owned())
         {
             match crate::eip::set_status_should_attach(&eip_api, &eip, &eni_id, node_ip, &name)
                 .await
