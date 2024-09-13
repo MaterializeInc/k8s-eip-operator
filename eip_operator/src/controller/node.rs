@@ -5,7 +5,7 @@ use kube::api::{Api, ListParams};
 use kube::error::ErrorResponse;
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
-use tracing::{event, info, instrument, warn, Level};
+use tracing::{debug, event, info, instrument, warn, Level};
 
 use eip_operator_shared::Error;
 
@@ -95,7 +95,7 @@ impl k8s_controller::Context for Context {
                 crate::eip::set_status_detached(&eip_api, &eip).await?;
             }
 
-            dbg!("Node {} is not ready, skipping EIP claim", &name);
+            debug!("Node {} is not ready, skipping EIP claim", &name);
             return Ok(None);
         }
 
