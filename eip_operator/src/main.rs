@@ -34,8 +34,6 @@ const FIELD_MANAGER: &str = "eip.materialize.cloud";
 const AUTOCREATE_EIP_LABEL: &str = "eip.materialize.cloud/autocreate_eip";
 const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
-const EGRESS_GATEWAY_NODE_SELECTOR_LABEL_KEY: &str = "workload";
-const EGRESS_GATEWAY_NODE_SELECTOR_LABEL_VALUE: &str = "materialize-egress";
 const EGRESS_NODE_STATUS_LABEL: &str = "egress-gateway.materialize.cloud/ready-status";
 
 // See https://us-east-1.console.aws.amazon.com/servicequotas/home/services/ec2/quotas
