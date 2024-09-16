@@ -1,14 +1,17 @@
 use std::collections::{HashMap, HashSet};
+use std::pin::pin;
 use std::time::Duration;
 
+use aws_config::{BehaviorVersion, ConfigLoader};
 use aws_sdk_ec2::types::Filter;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_servicequotas::types::ServiceQuota;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
 use futures::future::join_all;
+use futures::TryStreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_controller::Controller;
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams, Patch, PatchParams};
 use kube::{Client, ResourceExt};
 use tokio::task;
@@ -20,6 +23,7 @@ use eip::v2::Eip;
 
 mod aws;
 mod controller;
+mod egress;
 mod eip;
 mod kube_ext;
 
@@ -30,6 +34,7 @@ const FIELD_MANAGER: &str = "eip.materialize.cloud";
 const AUTOCREATE_EIP_LABEL: &str = "eip.materialize.cloud/autocreate_eip";
 const EIP_ALLOCATION_ID_ANNOTATION: &str = "eip.materialize.cloud/allocation_id";
 const EXTERNAL_DNS_TARGET_ANNOTATION: &str = "external-dns.alpha.kubernetes.io/target";
+const EGRESS_NODE_STATUS_LABEL: &str = "egress-gateway.materialize.cloud/ready-status";
 
 // See https://us-east-1.console.aws.amazon.com/servicequotas/home/services/ec2/quotas
 // and filter in the UI for EC2 quotas like this, or use the CLI:
@@ -53,7 +58,7 @@ async fn run() -> Result<(), Error> {
     let k8s_client = Client::try_default().await?;
 
     debug!("Getting ec2_client...");
-    let mut config_loader = eip_operator_shared::aws_config_loader_default();
+    let mut config_loader = aws_config_loader_default();
 
     if let Ok(endpoint) = std::env::var("AWS_ENDPOINT_URL") {
         config_loader = config_loader.endpoint_url(endpoint);
@@ -88,6 +93,9 @@ async fn run() -> Result<(), Error> {
         Some(ref namespace) => Api::<Eip>::namespaced(k8s_client.clone(), namespace),
         None => Api::<Eip>::all(k8s_client.clone()),
     };
+
+    debug!("Getting node api");
+    let node_api = Api::<Node>::all(k8s_client.clone());
 
     debug!("Cleaning up any orphaned EIPs");
     cleanup_orphan_eips(
@@ -136,7 +144,7 @@ async fn run() -> Result<(), Error> {
         let context = controller::node::Context::new(ec2_client.clone(), namespace.clone());
         let watch_config = kube_runtime::watcher::Config::default().labels(MANAGE_EIP_LABEL);
         let node_controller = Controller::cluster(k8s_client.clone(), context, watch_config);
-        task::spawn(node_controller.run())
+        task::spawn(node_controller.with_concurrency(1).run())
     });
 
     tasks.push({
@@ -149,10 +157,40 @@ async fn run() -> Result<(), Error> {
         task::spawn(eip_controller.run())
     });
 
+    tasks.push({
+        let eip_api = eip_api.clone();
+        let node_api = node_api.clone();
+        let watch_config = kube_runtime::watcher::Config::default();
+
+        task::spawn(async move {
+            let mut watcher = pin!(kube_runtime::watcher(eip_api.clone(), watch_config));
+
+            while let Some(eip_event) = watcher.try_next().await.unwrap_or_else(|e| {
+                event!(Level::ERROR, err = %e, "Error watching eips");
+                None
+            }) {
+                if let kube_runtime::watcher::Event::Apply(eip)
+                | kube_runtime::watcher::Event::Delete(eip) = eip_event
+                {
+                    if let Err(err) = crate::egress::label_egress_nodes(&eip, &node_api).await {
+                        event!(Level::ERROR, err = %err, "Node egress labeling reporting error");
+                    }
+                }
+            }
+        })
+    });
+
     join_all(tasks).await;
 
     debug!("exiting");
     Ok(())
+}
+
+/// Generate a finalizer path.
+fn finalizer_path(position: usize) -> jsonptr::Pointer {
+    format!("/metadata/finalizers/{}", position)
+        .parse()
+        .unwrap()
 }
 
 /// Finds all EIPs tagged for this cluster, then compares them to the pod UIDs. If the EIP is not
@@ -227,18 +265,17 @@ async fn cleanup_orphan_eips(
             .position(|s| s == LEGACY_POD_FINALIZER_NAME)
         {
             let pod_name = pod.name_unchecked();
-            let finalizer_path = format!("/metadata/finalizers/{}", position);
             pod_api
                 .patch::<Pod>(
                     &pod_name,
                     &PatchParams::default(),
                     &Patch::Json(json_patch::Patch(vec![
                         PatchOperation::Test(TestOperation {
-                            path: finalizer_path.clone(),
+                            path: finalizer_path(position),
                             value: LEGACY_POD_FINALIZER_NAME.into(),
                         }),
                         PatchOperation::Remove(RemoveOperation {
-                            path: finalizer_path,
+                            path: finalizer_path(position),
                         }),
                     ])),
                 )
@@ -275,4 +312,11 @@ fn set_abort_on_panic() {
         old_hook(panic_info);
         std::process::abort();
     }));
+}
+
+fn aws_config_loader_default() -> ConfigLoader {
+    let connector = hyper_tls::HttpsConnector::new();
+    let hyper_client_builder =
+        aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new().build(connector);
+    aws_config::defaults(BehaviorVersion::latest()).http_client(hyper_client_builder)
 }

@@ -4,9 +4,6 @@ use std::net::AddrParseError;
 use std::str::FromStr;
 use std::time::Duration;
 
-use aws_config::{BehaviorVersion, ConfigLoader};
-use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
-
 use aws_sdk_ec2::error::SdkError;
 use aws_sdk_ec2::operation::allocate_address::AllocateAddressError;
 use aws_sdk_ec2::operation::associate_address::AssociateAddressError;
@@ -17,8 +14,9 @@ use aws_sdk_ec2::operation::release_address::ReleaseAddressError;
 use aws_sdk_servicequotas::error::SdkError as ServiceQuotaSdkError;
 use aws_sdk_servicequotas::operation::get_service_quota::GetServiceQuotaError;
 use futures::Future;
-use hyper::client::HttpConnector;
 use hyper_tls::HttpsConnector;
+use hyper_util::client::legacy::connect::HttpConnector;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::trace::{Config, Sampler};
 use opentelemetry_sdk::Resource as OtelResource;
@@ -66,6 +64,10 @@ pub enum Error {
     MissingNodeName,
     #[error("Node does not have labels.")]
     MissingNodeLabels,
+    #[error("Node does not have a status.")]
+    MissingNodeStatus,
+    #[error("Node does not have a ready condition.")]
+    MissingNodeReadyCondition,
     #[error("Node does not have a provider_id in its spec.")]
     MissingProviderId,
     #[error("Node provider_id is not in expected format.")]
@@ -243,7 +245,7 @@ where
                 .with_channel(channel)
                 .with_metadata(mmap);
 
-            let tracer = opentelemetry_otlp::new_pipeline()
+            let tracer_provider = opentelemetry_otlp::new_pipeline()
                 .tracing()
                 .with_exporter(otlp_exporter)
                 .with_trace_config(
@@ -255,6 +257,7 @@ where
                 )
                 .install_batch(opentelemetry_sdk::runtime::Tokio)
                 .unwrap();
+            let tracer = tracer_provider.tracer_builder(service_name).build();
             let otel_layer = tracing_opentelemetry::layer()
                 .with_tracer(tracer)
                 .with_filter(otel_targets);
@@ -274,9 +277,4 @@ where
         }
     };
     f().await
-}
-
-pub fn aws_config_loader_default() -> ConfigLoader {
-    aws_config::defaults(BehaviorVersion::latest())
-        .http_client(HyperClientBuilder::new().build(HttpsConnector::new()))
 }

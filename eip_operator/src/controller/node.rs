@@ -5,7 +5,7 @@ use kube::api::{Api, ListParams};
 use kube::error::ErrorResponse;
 use kube::{Client, ResourceExt};
 use kube_runtime::controller::Action;
-use tracing::{event, info, instrument, warn, Level};
+use tracing::{debug, event, info, instrument, warn, Level};
 
 use eip_operator_shared::Error;
 
@@ -33,6 +33,7 @@ impl k8s_controller::Context for Context {
 
     const FINALIZER_NAME: &'static str = "eip.materialize.cloud/disassociate_node";
 
+    #[allow(clippy::blocks_in_conditions)]
     #[instrument(skip(self, client, node), err)]
     async fn apply(
         &self,
@@ -54,6 +55,7 @@ impl k8s_controller::Context for Context {
             .rsplit_once('/')
             .ok_or(Error::MalformedProviderId)?
             .1;
+
         let matched_eips: Vec<Eip> = eip_api
             .list(&ListParams::default())
             .await?
@@ -64,12 +66,39 @@ impl k8s_controller::Context for Context {
         if matched_eips.is_empty() {
             return Err(Error::NoEipResourceWithThatNodeSelector);
         }
+
         let eip = matched_eips.into_iter().find(|eip| {
             eip.status.as_ref().is_some_and(|s| {
                 s.resource_id.is_none()
                     || s.resource_id.as_ref().map(|r| r == &name).unwrap_or(false)
             })
         });
+
+        let node_condition_ready_status = node
+            .status
+            .as_ref()
+            .and_then(|status| status.conditions.as_ref())
+            .and_then(|conditions| conditions.iter().find(|c| c.type_ == "Ready"))
+            .map(|condition| condition.status.clone())
+            .ok_or(Error::MissingNodeReadyCondition)?;
+
+        // Check the Node's EIP claim and ready status.
+        // Node's with a ready status of "False" or "Unknown" should not have a claim to an EIP.
+        if node_condition_ready_status != "True" {
+            // If an EIP has a resource id label pointing to this node, remove that label releasing this nodes claim to the EIP
+            if let Some(eip) = eip {
+                warn!(
+                    "Node {} is in an unresponsive state, setting status detached on EIP {}",
+                    &name.clone(),
+                    &eip.name_unchecked()
+                );
+                crate::eip::set_status_detached(&eip_api, &eip).await?;
+            }
+
+            debug!("Node {} is not ready, skipping EIP claim", &name);
+            return Ok(None);
+        }
+
         let Some(eip) = eip else {
             info!("No un-associated eips found for node {}", &name);
             return Ok(None);
@@ -121,6 +150,7 @@ impl k8s_controller::Context for Context {
         Ok(None)
     }
 
+    #[allow(clippy::blocks_in_conditions)]
     #[instrument(skip(self, client, node), err)]
     async fn cleanup(
         &self,
@@ -152,8 +182,13 @@ impl k8s_controller::Context for Context {
                     crate::aws::disassociate_eip(&self.ec2_client, &association_id).await?;
                 }
             }
-            crate::eip::set_status_detached(&eip_api, &eip.name_unchecked()).await?;
+            crate::eip::set_status_detached(&eip_api, &eip).await?;
         }
+
+        let node_api = Api::<Node>::all(client);
+        crate::egress::add_gateway_status_label(&node_api, node.name_unchecked().as_str(), "false")
+            .await?;
+
         Ok(None)
     }
 }

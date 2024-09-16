@@ -237,7 +237,8 @@ pub mod v2 {
                         },
                     },
                 );
-                eip.meta_mut().resource_version = eip_v1.metadata.resource_version.clone();
+                let resource_version = eip_v1.metadata.resource_version.clone();
+                eip.meta_mut().resource_version = resource_version;
                 Ok(eip)
             } else {
                 Err(None)
@@ -421,30 +422,27 @@ pub(crate) async fn set_status_should_attach(
             serde_json::to_vec(&eip.clone())?,
         )
         .await?;
-    // let result = api.patch_status(name, &params, &patch).await;
     event!(Level::INFO, "Done updating status before attaching EIP.");
     Ok(result)
 }
 
 /// Unsets the eni and privateIpAddress fields in the Eip status.
 #[instrument(skip(api), err)]
-pub(crate) async fn set_status_detached(api: &Api<Eip>, name: &str) -> Result<Eip, kube::Error> {
+pub(crate) async fn set_status_detached(api: &Api<Eip>, eip: &Eip) -> Result<Eip, Error> {
     event!(Level::INFO, "Updating status for detached EIP.");
-    let patch = serde_json::json!({
-        "apiVersion": Eip::version(),
-        "kind": "Eip",
-        "status": {
-            "eni": None::<String>,
-            "privateIpAddress": None::<String>,
-            "resourceId": None::<String>,
-            "associationId": None::<String>,
-        }
-    });
-    let patch = Patch::Merge(&patch);
-    let params = PatchParams::default();
-    let result = api.patch_status(name, &params, &patch).await;
-    if result.is_ok() {
-        event!(Level::INFO, "Done updating status for detached EIP.");
-    }
-    result
+    let mut eip = eip.clone();
+    let status = eip.status.as_mut().ok_or(Error::MissingEipStatus)?;
+    status.association_id = None::<String>;
+    status.eni = None::<String>;
+    status.private_ip_address = None::<String>;
+    status.resource_id = None::<String>;
+    let result = api
+        .replace_status(
+            &eip.name_unchecked(),
+            &PostParams::default(),
+            serde_json::to_vec(&eip.clone())?,
+        )
+        .await?;
+    event!(Level::INFO, "Done updating status for detached EIP.");
+    Ok(result)
 }
