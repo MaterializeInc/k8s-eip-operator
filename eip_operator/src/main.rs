@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::future::ready;
 use std::pin::pin;
 use std::time::Duration;
 
@@ -8,14 +9,19 @@ use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_servicequotas::types::ServiceQuota;
 use aws_sdk_servicequotas::Client as ServiceQuotaClient;
 use futures::future::join_all;
-use futures::TryStreamExt;
+use futures::stream::{once, select_all};
+use futures::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation, TestOperation};
 use k8s_controller::Controller;
 use k8s_openapi::api::core::v1::{Node, Pod};
 use kube::api::{Api, ListParams, Patch, PatchParams};
-use kube::{Client, ResourceExt};
-use tokio::task;
-use tracing::{debug, event, info, instrument, Level};
+use kube::{Client, Resource, ResourceExt};
+use kube_runtime::{reflector, WatchStreamExt};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use tokio::{task, time};
+use tokio_stream::wrappers::{IntervalStream, UnboundedReceiverStream};
+use tracing::{debug, event, info, instrument, warn, Level};
 
 use eip_operator_shared::{run_with_tracing, Error, MANAGE_EIP_LABEL};
 
@@ -159,19 +165,23 @@ async fn run() -> Result<(), Error> {
 
     tasks.push({
         let eip_api = eip_api.clone();
+        let (eips, eip_notifications) = pin!(make_reflector::<Eip>(&eip_api)).await;
         let node_api = node_api.clone();
-        let watch_config = kube_runtime::watcher::Config::default();
 
         task::spawn(async move {
-            let mut watcher = pin!(kube_runtime::watcher(eip_api.clone(), watch_config));
-
-            while let Some(eip_event) = watcher.try_next().await.unwrap_or_else(|e| {
-                event!(Level::ERROR, err = %e, "Error watching eips");
-                None
-            }) {
-                if let kube_runtime::watcher::Event::Apply(eip)
-                | kube_runtime::watcher::Event::Delete(eip) = eip_event
-                {
+            // Repeating timer to label egress nodes
+            // This allows the egress node to be re-labeled even if a new EIP event is missed
+            let interval = time::interval(Duration::from_secs(300));
+            // timer needs to emit a `()` value for the select_all below
+            let repeating_timer = IntervalStream::new(interval).map(|_| ()).boxed();
+            // run once at startup, every 5 minutes, and every time an EIP changes
+            let mut stream = select_all([
+                once(async {}).boxed(),
+                repeating_timer,
+                UnboundedReceiverStream::new(eip_notifications).boxed(),
+            ]);
+            while let Some(()) = stream.next().await {
+                for eip in eips.state() {
                     if let Err(err) = crate::egress::label_egress_nodes(&eip, &node_api).await {
                         event!(Level::ERROR, err = %err, "Node egress labeling reporting error");
                     }
@@ -319,4 +329,44 @@ fn aws_config_loader_default() -> ConfigLoader {
     let hyper_client_builder =
         aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder::new().build(connector);
     aws_config::defaults(BehaviorVersion::latest()).http_client(hyper_client_builder)
+}
+
+/// Create a reflector for the given resource type.
+async fn make_reflector<K>(
+    api: &Api<K>,
+) -> (
+    reflector::Store<K>,
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+)
+where
+    K: kube::Resource
+        + Clone
+        + Send
+        + Sync
+        + DeserializeOwned
+        + Serialize
+        + std::fmt::Debug
+        + 'static,
+    <K as Resource>::DynamicType: Default + std::cmp::Eq + std::hash::Hash + std::clone::Clone,
+{
+    let (notify_write, notify_read) = tokio::sync::mpsc::unbounded_channel();
+    let api = api.clone();
+    let (store, writer) = reflector::store();
+    let watcher = kube_runtime::watcher(api, kube_runtime::watcher::Config::default().timeout(29));
+    task::spawn(async move {
+        watcher
+            .reflect(writer)
+            .for_each(|res| {
+                if let Err(e) = res {
+                    warn!("error in {} reflector: {}", K::kind(&Default::default()), e);
+                }
+                notify_write.send(()).unwrap();
+                ready(())
+            })
+            .await
+    });
+    // the only way this can return an error is if we drop the writer,
+    // which we do not ever do, so unwrap is fine
+    store.wait_until_ready().await.unwrap();
+    (store, notify_read)
 }

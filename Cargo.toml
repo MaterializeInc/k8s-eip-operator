@@ -29,6 +29,7 @@ netlink-packet-route = "0.17"
 rand = "0.8"
 rtnetlink = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio-stream = "0.1"
 kube = { version = "0.92.1", default-features = false, features = ["derive", "openssl-tls"] }
 kube-runtime = "0.92.1"
 tracing = "0.1"

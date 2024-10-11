@@ -40,7 +40,10 @@ pub(crate) async fn add_gateway_status_label(
 pub(crate) async fn label_egress_nodes(eip: &Eip, node_api: &Api<Node>) -> Result<(), Error> {
     let egress_nodes = node_api.list(&eip.get_resource_list_params()).await?.items;
     if egress_nodes.is_empty() {
-        info!("No egress nodes found. Skipping egress node ready status labeling.");
+        info!(
+            "No egress nodes found for EIP {}. Skipping egress node ready status labeling.",
+            eip.name_unchecked()
+        );
         return Ok(());
     }
 
@@ -66,6 +69,15 @@ pub(crate) async fn label_egress_nodes(eip: &Eip, node_api: &Api<Node>) -> Resul
             .map(|condition| condition.status.clone())
             .ok_or(Error::MissingNodeReadyCondition)?;
         if node_ready_status != "True" {
+            info!(
+                "Node {} is not ready. Skipping egress node ready status labeling.",
+                node.name_unchecked()
+            );
+            info!(
+                "Available egress nodes for EIP {} are: {:?}",
+                eip.name_unchecked(),
+                egress_nodes
+            );
             return Ok(());
         } else {
             // mark node with EIP as ready for egress traffic

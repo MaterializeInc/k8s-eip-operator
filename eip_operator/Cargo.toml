@@ -23,6 +23,7 @@ schemars = "0.8"
 serde = "1"
 serde_json = "1"
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 tracing = { workspace = true }
 
 eip-operator-shared = { workspace = true }
