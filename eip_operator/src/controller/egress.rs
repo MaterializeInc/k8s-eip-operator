@@ -3,7 +3,36 @@ use crate::Error;
 use k8s_openapi::api::core::v1::Node;
 use kube::api::{Api, Patch, PatchParams};
 use kube::ResourceExt;
-use tracing::{info, instrument};
+use kube_runtime::controller::Action;
+use std::{sync::Arc, time::Duration};
+use tracing::{event, info, instrument, Level};
+
+const EGRESS_NODE_LABEL_REQUEUE_DURATION: std::time::Duration = std::time::Duration::from_secs(300);
+
+#[derive(Debug)]
+pub struct Context {
+    pub node_api: Api<Node>,
+}
+
+/// Basic controller reconciliation for egress labeling.
+/// k8s-controller crate is not being used since this controller does not add a Finalizer.
+#[instrument(err)]
+pub(crate) async fn reconcile(eip: Arc<Eip>, ctx: Arc<Context>) -> Result<Action, kube::Error> {
+    let node_api = &ctx.node_api;
+
+    if let Err(err) = label_egress_nodes(&eip, node_api).await {
+        event!(Level::ERROR, err = %err, "Node egress labeling reporting error");
+    }
+
+    Ok(
+        Action::requeue(EGRESS_NODE_LABEL_REQUEUE_DURATION), // requeue every 5 minutes
+    )
+}
+
+pub(crate) fn error_policy(_eip: Arc<Eip>, error: &kube::Error, _ctx: Arc<Context>) -> Action {
+    event!(Level::ERROR, err = %error, "Reconcile error");
+    Action::requeue(Duration::from_secs(60))
+}
 
 /// Applies label specifying the ready status of the egress gateway node.
 #[instrument(skip(api), err)]

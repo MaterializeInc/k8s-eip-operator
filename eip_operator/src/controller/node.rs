@@ -186,8 +186,12 @@ impl k8s_controller::Context for Context {
         }
 
         let node_api = Api::<Node>::all(client);
-        crate::egress::add_gateway_status_label(&node_api, node.name_unchecked().as_str(), "false")
-            .await?;
+        crate::controller::egress::add_gateway_status_label(
+            &node_api,
+            node.name_unchecked().as_str(),
+            "false",
+        )
+        .await?;
 
         Ok(None)
     }
