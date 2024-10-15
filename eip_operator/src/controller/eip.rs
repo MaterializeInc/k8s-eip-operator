@@ -8,6 +8,7 @@ use tracing::{info, instrument, warn};
 
 use eip_operator_shared::Error;
 
+use crate::egress::label_egress_nodes_ready;
 use crate::eip::v2::Eip;
 use crate::eip::EipStatus;
 
@@ -129,6 +130,9 @@ impl k8s_controller::Context for Context {
                     crate::aws::disassociate_eip(&self.ec2_client, &association_id).await?;
                 }
                 crate::eip::set_status_detached(&eip_api, eip).await?;
+                let node_api = Api::<Node>::all(client);
+                // make sure no node is marked as ready with this eip.
+                label_egress_nodes_ready(eip, None, &node_api)?;
             }
         }
 

@@ -9,6 +9,7 @@ use tracing::{debug, event, info, instrument, warn, Level};
 
 use eip_operator_shared::Error;
 
+use crate::egress::label_egress_nodes_ready;
 use crate::eip::v2::Eip;
 use crate::kube_ext::NodeExt;
 
@@ -67,11 +68,10 @@ impl k8s_controller::Context for Context {
             return Err(Error::NoEipResourceWithThatNodeSelector);
         }
 
-        let eip = matched_eips.into_iter().find(|eip| {
-            eip.status.as_ref().is_some_and(|s| {
-                s.resource_id.is_none()
-                    || s.resource_id.as_ref().map(|r| r == &name).unwrap_or(false)
-            })
+        let cliamed_eip = matched_eips.into_iter().find(|eip| {
+            eip.status
+                .as_ref()
+                .is_some_and(|s| s.resource_id.as_ref().map(|r| r == &name).unwrap_or(false))
         });
 
         let node_condition_ready_status = node
@@ -84,69 +84,99 @@ impl k8s_controller::Context for Context {
 
         // Check the Node's EIP claim and ready status.
         // Node's with a ready status of "False" or "Unknown" should not have a claim to an EIP.
-        if node_condition_ready_status != "True" {
-            // If an EIP has a resource id label pointing to this node, remove that label releasing this nodes claim to the EIP
-            if let Some(eip) = eip {
-                warn!(
-                    "Node {} is in an unresponsive state, setting status detached on EIP {}",
-                    &name.clone(),
-                    &eip.name_unchecked()
-                );
-                crate::eip::set_status_detached(&eip_api, &eip).await?;
+        match node_condition_ready_status.as_str() {
+            "False" => {
+                // this node is not yet ready, reschedule
+                if let Some(eip) = cliamed_eip {
+                    warn!(
+                        "Node {} is not yet ready and shouldn't have an EIP",
+                        &name.clone(),
+                        &eip.name_unchecked()
+                    );
+                    crate::eip::set_status_detached(&eip_api, &eip).await?;
+                }
+                return Ok(Some(Action::requeue(Duration::from_secs(3))));
             }
-
-            debug!("Node {} is not ready, skipping EIP claim", &name);
-            return Ok(None);
+            "True" => {
+                // this node is ready, continue
+            }
+            "Unknown" | _ => {
+                // if the nodes status is no known, remove any associated eips
+                // don't reschedule
+                if let Some(eip) = cliamed_eip {
+                    warn!(
+                        "Node {} is in an unknown state ready and shouldn't have an EIP",
+                        &name.clone(),
+                        &eip.name_unchecked()
+                    );
+                    crate::eip::set_status_detached(&eip_api, &eip).await?;
+                }
+            }
         }
 
-        let Some(eip) = eip else {
+        let node_api = Api::<Node>::all(client);
+        // We've got a node that is ready
+
+        fn validate_attachment(eip: Eip) -> bool {
+            // This node is ready and has no EIPs, lets try to claim an open one.
+            let eip_name = eip.name_unchecked();
+            let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
+            let eip_description = crate::aws::describe_address(&self.ec2_client, allocation_id)
+                .await?
+                .addresses
+                .ok_or(Error::MissingAddresses)?
+                .swap_remove(0);
+            let instance_description =
+                crate::aws::describe_instance(&self.ec2_client, instance_id).await?;
+            let eni_id = crate::aws::get_eni_from_private_ip(&instance_description, node_ip)
+                .ok_or(Error::NoInterfaceWithThatIp)?;
+            eip_description.network_interface_id == Some(eni_id.to_owned())
+        }
+
+        // Attempt to associate with the existing EIP we have a claim for, otherwise
+        // choose the first EIP in the list
+        if let Some(eip) = cliamed_eip {
+            if validate_attachment(eip) {
+                let node_api = Api::<Node>::all(client);
+                label_egress_nodes_ready(&eip, node, &node_api)?;
+                Ok(None)
+            }
+        }
+
+        // We weren't associated with an EIP, attempt to find one
+        let open_eips = matched_eips
+            .into_iter()
+            .find(|eip| eip.status.as_ref().is_some_and(|s| s.resource_id.is_none()));
+
+        let Some(eips) = open_eips else {
+            //No eips!
             info!("No un-associated eips found for node {}", &name);
             return Ok(None);
         };
-        let eip_name = eip.name_unchecked();
-        let allocation_id = eip.allocation_id().ok_or(Error::MissingAllocationId)?;
-        let eip_description = crate::aws::describe_address(&self.ec2_client, allocation_id)
-            .await?
-            .addresses
-            .ok_or(Error::MissingAddresses)?
-            .swap_remove(0);
-        let instance_description =
-            crate::aws::describe_instance(&self.ec2_client, instance_id).await?;
 
-        let eni_id = crate::aws::get_eni_from_private_ip(&instance_description, node_ip)
-            .ok_or(Error::NoInterfaceWithThatIp)?;
-        if eip_description.network_interface_id != Some(eni_id.to_owned())
-            || eip_description.private_ip_address != Some(node_ip.to_owned())
-        {
-            match crate::eip::set_status_should_attach(&eip_api, &eip, &eni_id, node_ip, &name)
-                .await
-            {
-                Ok(_) => {
-                    info!("Found matching Eip, attaching it");
-                    let association_id = crate::aws::associate_eip(
-                        &self.ec2_client,
-                        allocation_id,
-                        &eni_id,
-                        node_ip,
-                    )
-                    .await?
-                    .association_id
-                    .ok_or(Error::MissingAssociationId)?;
-                    crate::eip::set_status_association_id(&eip_api, &eip_name, &association_id)
-                        .await?;
-                }
-                Err(Error::Kube {
-                    source: kube::Error::Api(ErrorResponse { reason, .. }),
-                }) if reason == "Conflict" => {
-                    warn!(
-                        "Node {} failed to claim eip {}, rescheduling to try another",
-                        name, eip_name
-                    );
-                    return Ok(Some(Action::requeue(Duration::from_secs(3))));
-                }
-                Err(e) => return Err(e),
-            };
-        }
+        // found an eip, attempt to "claim" it and attempt to associate
+        match crate::eip::set_status_should_attach(&eip_api, &eip, &eni_id, node_ip, &name).await {
+            Ok(_) => {
+                info!("Found matching Eip, attaching it");
+                let association_id =
+                    crate::aws::associate_eip(&self.ec2_client, allocation_id, &eni_id, node_ip)
+                        .await?
+                        .association_id
+                        .ok_or(Error::MissingAssociationId)?;
+                crate::eip::set_status_association_id(&eip_api, &eip_name, &association_id).await?;
+            }
+            Err(Error::Kube {
+                source: kube::Error::Api(ErrorResponse { reason, .. }),
+            }) if reason == "Conflict" => {
+                warn!(
+                    "Node {} failed to claim eip {}, rescheduling to try another",
+                    name, eip_name
+                );
+                return Ok(Some(Action::requeue(Duration::from_secs(3))));
+            }
+            Err(e) => return Err(e),
+        };
+        label_egress_nodes_ready(&eip, node, &node_api)?;
         Ok(None)
     }
 
@@ -186,9 +216,12 @@ impl k8s_controller::Context for Context {
         }
 
         let node_api = Api::<Node>::all(client);
-        crate::egress::add_gateway_status_label(&node_api, node.name_unchecked().as_str(), "false")
-            .await?;
-
+        crate::egress::remove_gateway_status_label(
+            &node_api,
+            node.name_unchecked().as_str(),
+            "false",
+        )
+        .await?;
         Ok(None)
     }
 }
