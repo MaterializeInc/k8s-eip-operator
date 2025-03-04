@@ -8,6 +8,16 @@ targets = [
 
 [advisories]
 version = 2
+ignore = [
+  # Dependency of kube < 0.96.0, so temporarily whitelisting it until we upgrade.
+  # This is just saying the "derivative" crate is unmaintained, but nothing is
+  # actively dangerous yet.
+  "RUSTSEC-2024-0388",
+  # Dependency of kube, and has no known version without it.
+  # This is just saying the "instant" crate is unmaintained, but nothing is
+  # actively dangerous yet.
+  "RUSTSEC-2024-0384",
+]
 
 [bans]
 multiple-versions = "deny"
@@ -58,6 +68,7 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "MIT",
+    "Unicode-3.0",
     "Unicode-DFS-2016",
 ]
 
