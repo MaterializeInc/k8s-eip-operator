@@ -8,7 +8,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.78.0"
+rust-version = "1.83.0"
 
 
 # Use this section only to change the source of dependencies that might
